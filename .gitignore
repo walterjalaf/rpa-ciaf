@@ -1,0 +1,95 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+.Python
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# Distribución / empaquetado
+dist/
+*.egg-info/
+*.egg
+MANIFEST
+
+# ── PyInstaller (build del .exe) ──────────────────────────────────────────────
+# Los builds compilados no van al repo — se generan con build/build.bat
+build/dist/
+build/__pycache__/
+rpa_conciliaciones/build/dist/
+*.spec.bak
+# Sí subir: build/installer.spec y build/build.bat (son configuración, no artefactos)
+
+# ── Credenciales y configuración sensible ─────────────────────────────────────
+# NUNCA subir tokens, contraseñas ni URLs de producción
+.env
+.env.*
+!.env.example
+config/credentials_local.py
+*.token
+*.key
+*.pem
+*.p12
+*.pfx
+
+# ── Archivos generados en runtime ─────────────────────────────────────────────
+# Carpeta temporal de downloads (generada automáticamente)
+rpa_conciliaciones/temp/
+temp/
+downloads/
+
+# Screenshots de diagnóstico (generados por reporter.py y health_checker.py)
+screenshots/
+*.screenshot.png
+
+# Cache local del TaskLoader (~/.rpa_conciliaciones/)
+.rpa_conciliaciones/
+
+# Grabaciones de macros locales (JSON generados por MacroStorage)
+# Incluir solo si se quiere compartir macros base en el repo
+macros/recordings/
+rpa_conciliaciones/macros/recordings/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── IDEs y editores ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Claude Code (configuración local del agente — no es código del proyecto)
+.claude/
+
+# ── Sistema operativo (Windows) ───────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ── Archivos comprimidos / binarios grandes ───────────────────────────────────
+# El .rar es un backup pesado, no va al repo
+*.rar
+*.zip
+*.7z
+*.tar.gz
+*.exe
+
+# ── Archivos de trabajo temporales ───────────────────────────────────────────
+cambios.txt
+*.tmp
+*.bak
+*.orig

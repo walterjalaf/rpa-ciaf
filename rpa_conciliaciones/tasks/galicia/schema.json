@@ -1,0 +1,15 @@
+{
+  "task_id": "galicia_movimientos",
+  "task_name": "Banco Galicia — Extracto",
+  "platform": "galicia",
+  "platform_url": "https://www.bancogalicia.com/personas/home.html",
+  "date_handler_type": "no_filter",
+  "date_mode": "last_month",
+  "date_mode_options": ["last_month", "current_month", "custom"],
+  "expected_file_extension": ".xlsx",
+  "download_timeout_seconds": 90,
+  "delivery": "direct",
+  "session_check_url": "https://www.bancogalicia.com/personas/home.html",
+  "session_indicator_image": "galicia_session_ok.png",
+  "macro_id": null
+}
