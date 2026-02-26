@@ -3,7 +3,11 @@ Componente visual de estado por tarea en el dashboard.
 
 Por qué existe: Cada tarea tiene una fila en la lista principal del dashboard.
 Esta fila muestra el estado actual (pendiente, ejecutando, completado, error)
-con íconos y colores que el contador entiende sin necesidad de leer logs.
+con borde lateral de color, íconos semánticos y una barra de progreso
+indeterminada cuando la tarea está corriendo.
+
+Rediseño v2.0: identidad visual CIAF — borde izquierdo de 4px, pill de estado,
+barra de progreso inline, sin código técnico visible al contador.
 
 Uso:
     row = TaskStatusRow(parent, task_name="Mercado Pago", task_id="mp_mov",
@@ -14,20 +18,56 @@ Uso:
 from __future__ import annotations
 
 import logging
-import webbrowser
 from collections.abc import Callable
 
 import customtkinter as ctk
 
 logger = logging.getLogger(__name__)
 
-# ── Mapa de estados visuales ──────────────────────────────────
-_STATUS_CONFIG = {
-    "pending":     {"icon": "\u23f8",  "color": "gray",       "label": "Pendiente"},
-    "running":     {"icon": "\u21bb",  "color": "#2196F3",    "label": "Ejecutando..."},
-    "done":        {"icon": "\u2705",  "color": "#4CAF50",    "label": "Completado"},
-    "done_manual": {"icon": "\U0001f4ce\u2705", "color": "#81C784", "label": "Cargado manualmente"},
-    "error":       {"icon": "\u274c",  "color": "#F44336",    "label": "Error"},
+# ── Paleta CIAF ────────────────────────────────────────────────
+_CIAF_BLUE    = "#0F4069"
+_CIAF_GRAY    = "#8A8A8D"
+_COLOR_OK     = "#28A745"
+_COLOR_ERROR  = "#DC3545"
+_COLOR_WARN   = "#E87722"
+
+# ── Mapa de estados visuales ───────────────────────────────────
+_STATUS_CONFIG: dict[str, dict] = {
+    "pending": {
+        "icon":         "◷",
+        "border_color": _CIAF_GRAY,
+        "label":        "Pendiente",
+        "pill_bg":      ("#E8E8E9", "#3A3A3C"),
+        "pill_fg":      (_CIAF_GRAY, "#AAAAAD"),
+    },
+    "running": {
+        "icon":         "⟳",
+        "border_color": _CIAF_BLUE,
+        "label":        "Ejecutando...",
+        "pill_bg":      ("#D6E4F0", "#0A2A45"),
+        "pill_fg":      (_CIAF_BLUE, "#5BA3D9"),
+    },
+    "done": {
+        "icon":         "✓",
+        "border_color": _COLOR_OK,
+        "label":        "Completado",
+        "pill_bg":      ("#D4EDDA", "#143020"),
+        "pill_fg":      (_COLOR_OK, "#5CB87A"),
+    },
+    "done_manual": {
+        "icon":         "📎",
+        "border_color": _COLOR_OK,
+        "label":        "Cargado manualmente",
+        "pill_bg":      ("#D4EDDA", "#143020"),
+        "pill_fg":      (_COLOR_OK, "#5CB87A"),
+    },
+    "error": {
+        "icon":         "✕",
+        "border_color": _COLOR_ERROR,
+        "label":        "Error — acción requerida",
+        "pill_bg":      ("#FDECEA", "#3B1214"),
+        "pill_fg":      (_COLOR_ERROR, "#E87070"),
+    },
 }
 
 
@@ -39,7 +79,9 @@ class TaskStatusRow(ctk.CTkFrame):
     pendientes, cuáles se ejecutaron bien y cuáles fallaron. Esta fila es
     el componente atómico que la lista de tareas repite por cada tarea activa.
 
-    Layout: [icono] [nombre de tarea] [mensaje de estado] [botón acción]
+    Layout:
+        [strip 4px] | [ícono] [nombre]  [pill-estado]  [botón acción?]
+                      [barra de progreso — solo en estado "running"]
     """
 
     def __init__(
@@ -53,49 +95,84 @@ class TaskStatusRow(ctk.CTkFrame):
         """
         Args:
             parent: Widget padre (el frame scrollable del dashboard).
-            task_name: Nombre legible de la tarea.
-            task_id: Identificador de la tarea.
-            platform_url: URL de la plataforma (para el botón "Abrir sitio").
-            on_manual_upload: Callback(task_id, task_name) al presionar
-                "Cargar archivo". None si no se quiere mostrar el botón.
+            task_name: Nombre legible de la tarea (para el contador).
+            task_id: Identificador interno de la tarea.
+            platform_url: URL de la plataforma (para botón "Abrir sitio").
+            on_manual_upload: Callback(task_id, task_name). None = sin botón.
         """
-        super().__init__(parent, corner_radius=8, fg_color="transparent")
+        super().__init__(
+            parent,
+            corner_radius=10,
+            fg_color=("white", "#1E2530"),
+            border_width=0,
+        )
         self._task_id = task_id
         self._task_name = task_name
         self._platform_url = platform_url
         self._on_manual_upload = on_manual_upload
         self._current_status = "pending"
-
-        self.grid_columnconfigure(2, weight=1)
-
-        # Icono de estado
-        self._icon_label = ctk.CTkLabel(
-            self, text="\u23f8", width=30,
-            font=ctk.CTkFont(size=16),
-        )
-        self._icon_label.grid(row=0, column=0, padx=(8, 4), pady=8)
-
-        # Nombre de la tarea
-        self._name_label = ctk.CTkLabel(
-            self, text=task_name,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            anchor="w",
-        )
-        self._name_label.grid(row=0, column=1, padx=(4, 8), pady=8, sticky="w")
-
-        # Mensaje de estado
-        self._status_label = ctk.CTkLabel(
-            self, text="Pendiente",
-            font=ctk.CTkFont(size=12),
-            text_color="gray", anchor="w",
-        )
-        self._status_label.grid(row=0, column=2, padx=8, pady=8, sticky="w")
-
-        # Frame para botones de acción
-        self._action_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self._action_frame.grid(row=0, column=3, padx=8, pady=4)
-
+        self._progress_bar: ctk.CTkProgressBar | None = None
         self._action_btn: ctk.CTkButton | None = None
+
+        self._build()
+
+    def _build(self) -> None:
+        """Construye el layout interno de la fila."""
+        # Borde lateral de color (4px) — cambia según estado
+        self._status_strip = ctk.CTkFrame(
+            self, width=5, corner_radius=0,
+            fg_color=_CIAF_GRAY,
+        )
+        self._status_strip.pack(side="left", fill="y")
+        self._status_strip.pack_propagate(False)
+
+        # Contenedor principal (a la derecha del strip)
+        self._main = ctk.CTkFrame(self, fg_color="transparent")
+        self._main.pack(side="left", fill="both", expand=True)
+        self._main.columnconfigure(1, weight=1)
+
+        # Fila superior: ícono · nombre · pill · botón
+        self._icon_label = ctk.CTkLabel(
+            self._main,
+            text="◷",
+            width=28,
+            font=ctk.CTkFont(size=16),
+            text_color=_CIAF_GRAY,
+        )
+        self._icon_label.grid(row=0, column=0, padx=(10, 4), pady=(10, 4))
+
+        self._name_label = ctk.CTkLabel(
+            self._main,
+            text=self._task_name,
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            anchor="w",
+            text_color=("gray10", "gray90"),
+        )
+        self._name_label.grid(row=0, column=1, padx=4, pady=(10, 4), sticky="w")
+
+        # Pill de estado
+        self._pill = ctk.CTkLabel(
+            self._main,
+            text="Pendiente",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            corner_radius=10,
+            fg_color=("#E8E8E9", "#3A3A3C"),
+            text_color=(_CIAF_GRAY, "#AAAAAD"),
+            padx=10, pady=2,
+        )
+        self._pill.grid(row=0, column=2, padx=8, pady=(10, 4))
+
+        # Frame para botones de acción (columna 3)
+        self._action_frame = ctk.CTkFrame(self._main, fg_color="transparent")
+        self._action_frame.grid(row=0, column=3, padx=(0, 10), pady=(10, 4))
+
+        # Fila inferior: barra de progreso (oculta por defecto)
+        self._progress_row = ctk.CTkFrame(self._main, fg_color="transparent")
+        self._progress_row.grid(
+            row=1, column=0, columnspan=4,
+            padx=(10, 10), pady=(0, 8), sticky="ew",
+        )
+        self._progress_row.columnconfigure(0, weight=1)
 
     @property
     def task_id(self) -> str:
@@ -105,31 +182,79 @@ class TaskStatusRow(ctk.CTkFrame):
         """
         Actualiza el estado visual de la fila.
 
+        Contrato público — firma no puede cambiar.
+
         Args:
-            status: Uno de 'pending', 'running', 'done', 'done_manual', 'error'.
-            message: Mensaje adicional para mostrar junto al estado.
+            status: 'pending' | 'running' | 'done' | 'done_manual' | 'error'.
+            message: Texto adicional visible al contador.
         """
         self._current_status = status
-        config = _STATUS_CONFIG.get(status, _STATUS_CONFIG["pending"])
+        cfg = _STATUS_CONFIG.get(status, _STATUS_CONFIG["pending"])
+        border_color = cfg["border_color"]
 
-        self._icon_label.configure(text=config["icon"])
-        display_msg = message if message else config["label"]
-        self._status_label.configure(
-            text=display_msg, text_color=config["color"]
+        # Strip de color lateral
+        self._status_strip.configure(fg_color=border_color)
+
+        # Ícono con color del estado
+        self._icon_label.configure(
+            text=cfg["icon"],
+            text_color=border_color,
         )
 
-        # Limpiar botón anterior
+        # Pill de estado
+        pill_text = message if message else cfg["label"]
+        self._pill.configure(
+            text=pill_text,
+            fg_color=cfg["pill_bg"],
+            text_color=cfg["pill_fg"],
+        )
+
+        # Barra de progreso indeterminada (solo "running")
+        self._manage_progress_bar(status)
+
+        # Botón de acción (solo "error")
+        self._manage_action_button(status)
+
+    # ── Gestión de barra de progreso ───────────────────────────
+
+    def _manage_progress_bar(self, status: str) -> None:
+        """Muestra la barra indeterminada en 'running', la oculta en otros."""
+        if status == "running":
+            if self._progress_bar is None:
+                self._progress_bar = ctk.CTkProgressBar(
+                    self._progress_row,
+                    mode="indeterminate",
+                    height=3,
+                    corner_radius=2,
+                    progress_color=_CIAF_BLUE,
+                    fg_color=("#D6E4F0", "#0A2A45"),
+                )
+                self._progress_bar.grid(row=0, column=0, sticky="ew")
+            self._progress_bar.start()
+        else:
+            if self._progress_bar is not None:
+                self._progress_bar.stop()
+                self._progress_bar.destroy()
+                self._progress_bar = None
+
+    # ── Gestión de botón de acción ─────────────────────────────
+
+    def _manage_action_button(self, status: str) -> None:
+        """Muestra el botón 'Cargar archivo' solo en estado error."""
+        # Destruir botón anterior en cualquier caso
         if self._action_btn is not None:
             self._action_btn.destroy()
             self._action_btn = None
 
-        # Mostrar botón de carga manual en estado error
         if status == "error" and self._on_manual_upload:
             self._action_btn = ctk.CTkButton(
                 self._action_frame,
                 text="Cargar archivo",
                 width=120, height=28,
-                font=ctk.CTkFont(size=11),
+                font=ctk.CTkFont(family="Segoe UI", size=11),
+                fg_color=_COLOR_ERROR,
+                hover_color="#B02A37",
+                corner_radius=6,
                 command=self._handle_manual_upload,
             )
             self._action_btn.pack(side="left", padx=2)
