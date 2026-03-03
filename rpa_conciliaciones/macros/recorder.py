@@ -99,6 +99,7 @@ class MacroRecorder:
         self._keyboard_listener: pynput.keyboard.Listener | None = None
         self._pending_date_step: bool = False      # True mientras el técnico escribe el placeholder
         self._current_modifiers: set[str] = set()  # Modificadores actualmente presionados
+        self._paused: bool = False                 # True mientras la UI muestra un popup de configuración
 
     def start(
         self,
@@ -315,6 +316,32 @@ class MacroRecorder:
             file_extensions or ["default (.xlsx, .csv)"],
         )
 
+    def pause(self) -> None:
+        """
+        Suspende temporalmente la captura de eventos.
+
+        Llamar antes de abrir cualquier popup de configuración durante la grabación
+        para que los clics en la UI no contaminen la macro.
+        El recorder sigue "activo" — stop() y mark_*() siguen disponibles.
+        """
+        self._paused = True
+        logger.debug("Grabación pausada (UI abierta)")
+
+    def resume(self) -> None:
+        """
+        Reanuda la captura de eventos.
+
+        Llamar al cerrar el popup, tanto si el técnico insertó la acción
+        como si canceló. Siempre seguro de llamar aunque no esté pausado.
+        """
+        self._paused = False
+        logger.debug("Grabación reanudada")
+
+    @property
+    def is_paused(self) -> bool:
+        """True si la captura está suspendida por un popup de configuración."""
+        return self._paused
+
     @property
     def is_recording(self) -> bool:
         """True si hay una grabación activa."""
@@ -336,6 +363,8 @@ class MacroRecorder:
     ) -> None:
         """Captura clics izquierdos. Colapsa multi-clic en double/triple."""
         if not pressed or button != Button.left:
+            return
+        if not self._recording or self._paused:
             return
 
         # El técnico hizo clic → fecha placeholder terminada
@@ -373,7 +402,7 @@ class MacroRecorder:
 
     def _on_key_press(self, key: pynput.keyboard.Key) -> None:
         """Captura teclas. Ignora modificadoras solas y placeholders de DateStep."""
-        if not self._recording:
+        if not self._recording or self._paused:
             return
 
         # Actualizar estado de modificadores
