@@ -280,7 +280,10 @@ class TaskRunner:
             watcher.take_snapshot()
 
             player = MacroPlayer(executor)
-            player.play(macro, date_from, date_to)
+            player.play(
+                macro, date_from, date_to,
+                on_progress=self._make_progress_callback(task.task_id),
+            )
 
             filepath = watcher.wait_for_download()
             final_path = watcher.cleanup(filepath)
@@ -294,6 +297,18 @@ class TaskRunner:
                 launcher.close()
             except Exception as e:
                 logger.debug("Error cerrando Chrome tras macro: %s", e)
+
+    def _make_progress_callback(self, task_id: str) -> Callable[[str], None]:
+        """
+        Crea un callback de progreso para MacroPlayer.
+
+        El callback emite mensajes "attempt|||max_retries|||desc" al hilo de UI
+        via on_status_change con status="progress". La UI los parsea para mostrar
+        el indicador de reintentos en tiempo real en la fila de la tarea.
+        """
+        def _on_progress(message: str) -> None:
+            self._on_status_change(task_id, "progress", message)
+        return _on_progress
 
     def _report_success(
         self,

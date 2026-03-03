@@ -113,6 +113,12 @@ class TaskStatusRow(ctk.CTkFrame):
         self._current_status = "pending"
         self._progress_bar: ctk.CTkProgressBar | None = None
         self._action_btn: ctk.CTkButton | None = None
+        # Estado de progreso determinístico (wait_image_or_reload / wait_download_or_reload)
+        self._elapsed_seconds: int = 0
+        self._elapsed_after_id: str | None = None
+        self._det_progress_bar: ctk.CTkProgressBar | None = None
+        self._progress_det_label: ctk.CTkLabel | None = None
+        self._progress_elapsed_label: ctk.CTkLabel | None = None
 
         self._build()
 
@@ -185,10 +191,27 @@ class TaskStatusRow(ctk.CTkFrame):
         Contrato público — firma no puede cambiar.
 
         Args:
-            status: 'pending' | 'running' | 'done' | 'done_manual' | 'error'.
-            message: Texto adicional visible al contador.
+            status: 'pending' | 'running' | 'done' | 'done_manual' | 'error' | 'progress'.
+            message: Texto adicional visible al contador. Para 'progress' usa el
+                formato "attempt|||max_retries|||descripción" (lo parsea internamente).
         """
         self._current_status = status
+
+        # Estado transitorio de progreso (recargas en macros)
+        if status == "progress":
+            parts = message.split("|||", 2)
+            try:
+                attempt = int(parts[0]) if len(parts) > 0 else 1
+                max_retries = int(parts[1]) if len(parts) > 1 else 1
+            except ValueError:
+                attempt, max_retries = 1, 1
+            desc = parts[2] if len(parts) > 2 else message
+            self._manage_progress_indicator(attempt, max_retries, desc)
+            return
+
+        # Al salir de "progress", limpiar indicador determinístico
+        self._cleanup_progress_indicator()
+
         cfg = _STATUS_CONFIG.get(status, _STATUS_CONFIG["pending"])
         border_color = cfg["border_color"]
 
@@ -263,3 +286,91 @@ class TaskStatusRow(ctk.CTkFrame):
         """Llama al callback de carga manual."""
         if self._on_manual_upload:
             self._on_manual_upload(self._task_id, self._task_name)
+
+    # ── Indicador de progreso determinístico (Plan D) ───────────
+
+    def _manage_progress_indicator(
+        self, attempt: int, max_retries: int, desc: str
+    ) -> None:
+        """
+        Crea o actualiza el indicador de progreso para acciones de espera con recarga.
+
+        Primera llamada: crea barra determinística + labels + timer elapsed.
+        Llamadas siguientes: actualiza valor de barra y texto.
+        Limpia la barra indeterminada de "running" si existía.
+        """
+        if self._det_progress_bar is None:
+            # Limpiar barra indeterminada de "running" si existe
+            self._manage_progress_bar("progress")
+            # Header visual: strip + ícono + pill
+            self._status_strip.configure(fg_color=_CIAF_BLUE)
+            self._icon_label.configure(text="⟳", text_color=_CIAF_BLUE)
+            self._pill.configure(
+                text="Reintentando...",
+                fg_color=("#D6E4F0", "#0A2A45"),
+                text_color=(_CIAF_BLUE, "#5BA3D9"),
+            )
+            # Barra determinística
+            self._det_progress_bar = ctk.CTkProgressBar(
+                self._progress_row,
+                mode="determinate",
+                height=6,
+                corner_radius=3,
+                progress_color=_CIAF_BLUE,
+                fg_color=("#D6E4F0", "#0A2A45"),
+            )
+            self._det_progress_bar.grid(
+                row=0, column=0, columnspan=2, sticky="ew", pady=(0, 2)
+            )
+            # Label: "Intento X/N — desc"
+            self._progress_det_label = ctk.CTkLabel(
+                self._progress_row,
+                text="",
+                font=ctk.CTkFont(family="Segoe UI", size=10),
+                text_color=(_CIAF_BLUE, "#5BA3D9"),
+                anchor="w",
+            )
+            self._progress_det_label.grid(row=1, column=0, sticky="w")
+            # Label elapsed
+            self._progress_elapsed_label = ctk.CTkLabel(
+                self._progress_row,
+                text="0:00",
+                font=ctk.CTkFont(family="Segoe UI", size=10),
+                text_color=(_CIAF_GRAY, "#AAAAAD"),
+                anchor="e",
+            )
+            self._progress_elapsed_label.grid(row=1, column=1, sticky="e")
+            self._progress_row.columnconfigure(1, weight=0)
+            # Iniciar contador de tiempo
+            self._elapsed_seconds = 0
+            self._tick_elapsed()
+
+        # Actualizar valores
+        self._det_progress_bar.set((attempt - 1) / max(max_retries, 1))
+        self._progress_det_label.configure(
+            text=f"Intento {attempt}/{max_retries} — {desc}"
+        )
+
+    def _cleanup_progress_indicator(self) -> None:
+        """Destruye el indicador determinístico y cancela el timer elapsed."""
+        if self._elapsed_after_id is not None:
+            self.after_cancel(self._elapsed_after_id)
+            self._elapsed_after_id = None
+        for widget in (
+            self._det_progress_bar,
+            self._progress_det_label,
+            self._progress_elapsed_label,
+        ):
+            if widget is not None:
+                widget.destroy()
+        self._det_progress_bar = None
+        self._progress_det_label = None
+        self._progress_elapsed_label = None
+
+    def _tick_elapsed(self) -> None:
+        """Incrementa y muestra el tiempo transcurrido desde el primer progreso."""
+        if self._progress_elapsed_label is not None:
+            mins, secs = divmod(self._elapsed_seconds, 60)
+            self._progress_elapsed_label.configure(text=f"{mins}:{secs:02d}")
+            self._elapsed_seconds += 1
+            self._elapsed_after_id = self.after(1000, self._tick_elapsed)

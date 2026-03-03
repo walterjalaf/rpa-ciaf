@@ -269,12 +269,32 @@ class MacroRecorderPanel(ctk.CTkFrame):
 
         ctk.CTkButton(
             controls,
+            text="⏳  Esperar o recargar",
+            height=32, corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            fg_color=(_COLOR_WARN, "#8B4A00"),
+            hover_color=("orange3", "#6B3800"),
+            command=self._show_wait_reload_picker,
+        ).grid(row=1, column=0, padx=(0, 4), pady=3, sticky="ew")
+
+        ctk.CTkButton(
+            controls,
             text="📅  Marcar fecha fin",
             height=32, corner_radius=6,
             font=ctk.CTkFont(family="Segoe UI", size=11),
             fg_color=_CIAF_BLUE, hover_color=_CIAF_BLUE_HOVER,
             command=lambda: self._show_format_picker(DATE_TO),
         ).grid(row=1, column=1, padx=(4, 0), pady=3, sticky="ew")
+
+        ctk.CTkButton(
+            controls,
+            text="⬇  Esperar descarga o recargar",
+            height=32, corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            fg_color=(_CIAF_BLUE, "#0A2D50"),
+            hover_color=(_CIAF_BLUE_HOVER, "#061E35"),
+            command=self._show_wait_download_picker,
+        ).grid(row=2, column=0, columnspan=2, padx=0, pady=3, sticky="ew")
 
         # Botón detener — CTA rojo prominente
         ctk.CTkButton(
@@ -505,6 +525,316 @@ class MacroRecorderPanel(ctk.CTkFrame):
                 ),
             ).pack(fill="x", padx=16, pady=2)
 
+    def _show_wait_reload_picker(self) -> None:
+        """Abre un popup CIAF-styled para configurar una acción wait_image_or_reload.
+
+        Incluye sección de instrucciones para capturar el PNG template antes
+        de mostrar el formulario de configuración.
+        """
+        popup = ctk.CTkToplevel(self)
+        popup.title("Esperar imagen o recargar")
+        popup.geometry("400x620")
+        popup.resizable(False, True)
+        popup.grab_set()
+
+        # Barra de color superior
+        ctk.CTkFrame(popup, height=5, corner_radius=0, fg_color=_COLOR_WARN).pack(fill="x")
+
+        # Título
+        ctk.CTkLabel(
+            popup,
+            text="Esperar imagen o recargar página",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            text_color=("gray10", "gray90"),
+        ).pack(pady=(12, 8), padx=16, anchor="w")
+
+        # ── Sección de instrucciones PNG ──────────────────────────────────
+        guide_card = ctk.CTkFrame(
+            popup,
+            corner_radius=8,
+            fg_color=("#FFF8EE", "#2C2000"),
+            border_width=1,
+            border_color=(_COLOR_WARN, "#8B4A00"),
+        )
+        guide_card.pack(fill="x", padx=16, pady=(0, 10))
+
+        # Header de la card
+        guide_header = ctk.CTkFrame(guide_card, fg_color="transparent")
+        guide_header.pack(fill="x", padx=10, pady=(8, 4))
+        ctk.CTkLabel(
+            guide_header,
+            text="📷",
+            font=ctk.CTkFont(size=13),
+        ).pack(side="left")
+        ctk.CTkLabel(
+            guide_header,
+            text="Cómo capturar el PNG antes de configurar",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color=(_COLOR_WARN, "#F0A030"),
+        ).pack(side="left", padx=(6, 0))
+
+        # Pasos
+        _STEPS = [
+            ("1.", "Abrí Chrome y navegá a la plataforma"),
+            ("2.", "Realizá el proceso de exportación hasta que aparezca el botón listo"),
+            ("3.", "Presioná  Win + Shift + S  →  capturá SOLO el área del botón"),
+            ("4.", "Guardá el PNG en:"),
+            ("",   "%LOCALAPPDATA%\\rpa_conciliaciones\\macros\\images\\"),
+            ("5.", "Volvé aquí, completá el nombre del archivo y hacé clic en Insertar"),
+        ]
+        font_step  = ctk.CTkFont(family="Segoe UI", size=10)
+        font_path  = ctk.CTkFont(family="Consolas",  size=9)
+        for num, text in _STEPS:
+            row = ctk.CTkFrame(guide_card, fg_color="transparent")
+            row.pack(fill="x", padx=(10, 8), pady=1)
+            if num:
+                ctk.CTkLabel(
+                    row, text=num, width=18,
+                    font=font_step, anchor="e",
+                    text_color=(_COLOR_WARN, "#F0A030"),
+                ).pack(side="left")
+            font_use = font_path if not num else font_step
+            ctk.CTkLabel(
+                row, text=text,
+                font=font_use, anchor="w",
+                text_color=("gray15", "gray80"),
+                wraplength=310,
+            ).pack(side="left", padx=(4, 0))
+
+        # Nota crítica DPI
+        ctk.CTkLabel(
+            guide_card,
+            text="⚠  Capturá el PNG en el mismo equipo y resolución donde correrá el bot",
+            font=ctk.CTkFont(family="Segoe UI", size=9),
+            text_color=(_COLOR_WARN, "#F0A030"),
+            wraplength=360,
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=10, pady=(4, 8))
+
+        # ── Separador ─────────────────────────────────────────────────────
+        ctk.CTkFrame(
+            popup, height=1, corner_radius=0,
+            fg_color=("gray85", "gray25"),
+        ).pack(fill="x", padx=16, pady=(0, 10))
+
+        # ── Formulario de configuración ───────────────────────────────────
+        form = ctk.CTkFrame(popup, fg_color="transparent")
+        form.pack(fill="x", padx=16)
+
+        # Nombre del template
+        ctk.CTkLabel(
+            form, text="Archivo PNG (nombre exacto):",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color=("gray20", "gray80"),
+        ).pack(anchor="w", pady=(0, 2))
+        template_entry = ctk.CTkEntry(
+            form, height=30, corner_radius=6,
+            placeholder_text="boton_descargar_listo.png",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+        )
+        template_entry.pack(fill="x", pady=(0, 8))
+
+        # Fila: max_retries + retry_interval_seconds
+        row2 = ctk.CTkFrame(form, fg_color="transparent")
+        row2.pack(fill="x", pady=(0, 8))
+        row2.columnconfigure((0, 1), weight=1)
+
+        col_a = ctk.CTkFrame(row2, fg_color="transparent")
+        col_a.grid(row=0, column=0, padx=(0, 4), sticky="nsew")
+        ctk.CTkLabel(
+            col_a, text="Intentos máximos:",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=("gray20", "gray80"),
+        ).pack(anchor="w", pady=(0, 2))
+        retries_entry = ctk.CTkEntry(
+            col_a, height=30, corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+        )
+        retries_entry.insert(0, "10")
+        retries_entry.pack(fill="x")
+
+        col_b = ctk.CTkFrame(row2, fg_color="transparent")
+        col_b.grid(row=0, column=1, padx=(4, 0), sticky="nsew")
+        ctk.CTkLabel(
+            col_b, text="Segundos entre reintentos:",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=("gray20", "gray80"),
+        ).pack(anchor="w", pady=(0, 2))
+        interval_entry = ctk.CTkEntry(
+            col_b, height=30, corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+        )
+        interval_entry.insert(0, "15")
+        interval_entry.pack(fill="x")
+
+        # reload_key
+        ctk.CTkLabel(
+            form, text="Tecla de recarga:",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=("gray20", "gray80"),
+        ).pack(anchor="w", pady=(0, 2))
+        key_entry = ctk.CTkEntry(
+            form, height=30, corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+        )
+        key_entry.insert(0, "f5")
+        key_entry.pack(fill="x", pady=(0, 10))
+
+        # Label de error
+        error_lbl = ctk.CTkLabel(
+            popup, text="",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=_COLOR_ERROR,
+        )
+        error_lbl.pack(padx=16, anchor="w")
+
+        def _on_insert():
+            template = template_entry.get().strip()
+            if not template:
+                error_lbl.configure(text="⚠  Ingresá el nombre del archivo PNG")
+                return
+            try:
+                max_retries = int(retries_entry.get().strip())
+                interval = float(interval_entry.get().strip())
+            except ValueError:
+                error_lbl.configure(text="⚠  Intentos e intervalo deben ser números")
+                return
+            reload_key = key_entry.get().strip() or "f5"
+            popup.destroy()
+            try:
+                self._recorder.mark_wait_image_or_reload(
+                    image_template=template,
+                    max_retries=max_retries,
+                    retry_interval_seconds=interval,
+                    reload_key=reload_key,
+                )
+            except MacroRecorderError as e:
+                logger.warning("mark_wait_image_or_reload falló: %s", e)
+
+        ctk.CTkButton(
+            popup,
+            text="Insertar acción",
+            height=36, corner_radius=8,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color=(_COLOR_WARN, "#8B4A00"),
+            hover_color=("orange3", "#6B3800"),
+            command=_on_insert,
+        ).pack(fill="x", padx=16, pady=(6, 14))
+
+    def _show_wait_download_picker(self) -> None:
+        """Abre un popup para configurar una acción wait_download_or_reload.
+
+        No requiere PNG — detecta el archivo directamente en la carpeta Downloads.
+        """
+        popup = ctk.CTkToplevel(self)
+        popup.title("Esperar descarga o recargar")
+        popup.geometry("360x360")
+        popup.resizable(False, False)
+        popup.grab_set()
+
+        ctk.CTkFrame(popup, height=5, corner_radius=0, fg_color=_CIAF_BLUE).pack(fill="x")
+
+        ctk.CTkLabel(
+            popup,
+            text="Esperar archivo en Downloads con recarga",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            text_color=("gray10", "gray90"),
+        ).pack(pady=(12, 2), padx=16, anchor="w")
+
+        ctk.CTkLabel(
+            popup,
+            text="No requiere PNG — detecta el archivo directamente en la carpeta Downloads",
+            font=ctk.CTkFont(family="Segoe UI", size=10),
+            text_color=_CIAF_GRAY,
+            wraplength=320, justify="left",
+        ).pack(pady=(0, 10), padx=16, anchor="w")
+
+        ctk.CTkFrame(
+            popup, height=1, corner_radius=0, fg_color=("gray85", "gray25"),
+        ).pack(fill="x", padx=16, pady=(0, 10))
+
+        form = ctk.CTkFrame(popup, fg_color="transparent")
+        form.pack(fill="x", padx=16)
+
+        # Fila: max_retries + intervalo
+        row_num = ctk.CTkFrame(form, fg_color="transparent")
+        row_num.pack(fill="x", pady=(0, 8))
+        row_num.columnconfigure((0, 1), weight=1)
+
+        col_a = ctk.CTkFrame(row_num, fg_color="transparent")
+        col_a.grid(row=0, column=0, padx=(0, 4), sticky="nsew")
+        ctk.CTkLabel(col_a, text="Intentos máximos:",
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=("gray20", "gray80")).pack(anchor="w", pady=(0, 2))
+        retries_entry = ctk.CTkEntry(col_a, height=30, corner_radius=6,
+                                     font=ctk.CTkFont(family="Segoe UI", size=11))
+        retries_entry.insert(0, "10")
+        retries_entry.pack(fill="x")
+
+        col_b = ctk.CTkFrame(row_num, fg_color="transparent")
+        col_b.grid(row=0, column=1, padx=(4, 0), sticky="nsew")
+        ctk.CTkLabel(col_b, text="Segundos por intento:",
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=("gray20", "gray80")).pack(anchor="w", pady=(0, 2))
+        interval_entry = ctk.CTkEntry(col_b, height=30, corner_radius=6,
+                                      font=ctk.CTkFont(family="Segoe UI", size=11))
+        interval_entry.insert(0, "30")
+        interval_entry.pack(fill="x")
+
+        # Extensiones (opcional)
+        ctk.CTkLabel(form, text="Extensiones a detectar (vacío = .xlsx y .csv):",
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=("gray20", "gray80")).pack(anchor="w", pady=(0, 2))
+        ext_entry = ctk.CTkEntry(form, height=30, corner_radius=6,
+                                 placeholder_text=".xlsx",
+                                 font=ctk.CTkFont(family="Segoe UI", size=11))
+        ext_entry.pack(fill="x", pady=(0, 8))
+
+        # Tecla de recarga
+        ctk.CTkLabel(form, text="Tecla de recarga:",
+                     font=ctk.CTkFont(family="Segoe UI", size=11),
+                     text_color=("gray20", "gray80")).pack(anchor="w", pady=(0, 2))
+        key_entry = ctk.CTkEntry(form, height=30, corner_radius=6,
+                                 font=ctk.CTkFont(family="Segoe UI", size=11))
+        key_entry.insert(0, "f5")
+        key_entry.pack(fill="x", pady=(0, 10))
+
+        error_lbl = ctk.CTkLabel(popup, text="",
+                                 font=ctk.CTkFont(family="Segoe UI", size=11),
+                                 text_color=_COLOR_ERROR)
+        error_lbl.pack(padx=16, anchor="w")
+
+        def _on_insert():
+            try:
+                max_retries = int(retries_entry.get().strip())
+                interval = float(interval_entry.get().strip())
+            except ValueError:
+                error_lbl.configure(text="⚠  Intentos e intervalo deben ser números")
+                return
+            ext_raw = ext_entry.get().strip()
+            extensions = [e.strip() for e in ext_raw.split() if e.strip()] if ext_raw else None
+            reload_key = key_entry.get().strip() or "f5"
+            popup.destroy()
+            try:
+                self._recorder.mark_wait_download_or_reload(
+                    max_retries=max_retries,
+                    retry_interval_seconds=interval,
+                    reload_key=reload_key,
+                    file_extensions=extensions,
+                )
+            except MacroRecorderError as e:
+                logger.warning("mark_wait_download_or_reload falló: %s", e)
+
+        ctk.CTkButton(
+            popup, text="Insertar acción",
+            height=36, corner_radius=8,
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color=(_CIAF_BLUE, _CIAF_BLUE_HOVER),
+            hover_color=(_CIAF_BLUE_HOVER, "#061E35"),
+            command=_on_insert,
+        ).pack(fill="x", padx=16, pady=(4, 12))
+
     def _apply_date_step(self, date_field: str, date_format: str, popup) -> None:
         """Inserta el DateStep en la grabación y cierra el popup."""
         popup.destroy()
@@ -619,6 +949,13 @@ class MacroRecorderPanel(ctk.CTkFrame):
             return f"DATE_STEP          {action.date_field}  [{action.date_format}]"
         if t == "wait_image":
             return f"wait_image         {action.image_template}"
+        if t == "wait_image_or_reload":
+            return (f"wait_img_or_reload {action.image_template}  "
+                    f"[{action.max_retries}x / {action.retry_interval_seconds}s]")
+        if t == "wait_download_or_reload":
+            exts = ", ".join(action.file_extensions) if action.file_extensions else "default"
+            return (f"wait_dl_or_reload   "
+                    f"[{action.max_retries}x / {action.retry_interval_seconds}s | {exts}]")
         if t == "delay":
             return f"delay              {action.delay}s"
         return t

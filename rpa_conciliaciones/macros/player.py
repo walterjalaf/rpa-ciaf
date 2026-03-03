@@ -28,10 +28,12 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
-from core.exceptions import ChromeNotFoundError, ImageNotFoundError
+from core.downloader import DownloadWatcher
+from core.exceptions import ChromeNotFoundError, DownloadTimeoutError, ImageNotFoundError
 from core.pyauto_executor import PyAutoExecutor
 from macros.date_step import DATE_FROM, DATE_TO
 from macros.exceptions import PlaybackError
@@ -82,6 +84,7 @@ class MacroPlayer:
         recording: Recording,
         date_from: date,
         date_to: date,
+        on_progress: Callable[[str], None] | None = None,
     ) -> None:
         """
         Reproduce todas las acciones de la Recording.
@@ -91,11 +94,16 @@ class MacroPlayer:
             - Ejecuta la acción usando el PyAutoExecutor
             - Para 'click' y 'paste': verifica foco de Chrome primero
             - Para 'date_step': inyecta la fecha formateada vía paste_text
+            - Para 'wait_image_or_reload' / 'wait_download_or_reload': emite
+              progreso vía on_progress(f"{attempt}|||{max_retries}|||desc")
 
         Args:
             recording: Recording cargada desde MacroStorage.
             date_from: Fecha inicio del período (para DateStep DATE_FROM).
             date_to: Fecha fin del período (para DateStep DATE_TO).
+            on_progress: Callback opcional que recibe mensajes de progreso con
+                formato "attempt|||max_retries|||descripción". La UI lo usa para
+                actualizar el indicador de reintentos en tiempo real.
 
         Raises:
             PlaybackError: Si un wait_image falla o Chrome no responde.
@@ -109,7 +117,7 @@ class MacroPlayer:
         for index, action in enumerate(recording.actions):
             try:
                 time.sleep(action.delay)
-                self._execute_action(action, index, date_from, date_to)
+                self._execute_action(action, index, date_from, date_to, on_progress)
             except PlaybackError:
                 raise
             except ChromeNotFoundError:
@@ -137,6 +145,7 @@ class MacroPlayer:
         index: int,
         date_from: date,
         date_to: date,
+        on_progress: Callable[[str], None] | None = None,
     ) -> None:
         """Ejecuta una acción individual según su type."""
         t = action.type
@@ -179,6 +188,12 @@ class MacroPlayer:
                 template, timeout=30, confidence=action.confidence
             )
 
+        elif t == "wait_image_or_reload":
+            self._play_wait_image_or_reload(action, index, on_progress)
+
+        elif t == "wait_download_or_reload":
+            self._play_wait_download_or_reload(action, index, on_progress)
+
         elif t == "date_step":
             self._play_date_step(action, date_from, date_to)
 
@@ -187,6 +202,126 @@ class MacroPlayer:
 
         else:
             logger.warning("Tipo de acción desconocido en paso %d: '%s'. Ignorando.", index, t)
+
+    def _play_wait_image_or_reload(
+        self,
+        action: Action,
+        index: int,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> None:
+        """
+        Busca un template PNG en pantalla y recarga la página entre intentos.
+
+        Por qué existe: Algunas plataformas generan reportes en background;
+        el botón "Descargar" puede tardar entre 30s y 5 minutos en aparecer.
+        Este método evita que el bot falle por timeout fijo.
+
+        Args:
+            action: Action con image_template, max_retries, retry_interval_seconds,
+                    reload_key y confidence configurados.
+            index: Posición en la secuencia (para mensajes de error).
+            on_progress: Callback opcional que recibe progreso en formato
+                "attempt|||max_retries|||descripción".
+
+        Raises:
+            PlaybackError: Si la imagen no aparece tras max_retries intentos.
+        """
+        template = self._images_dir / action.image_template
+        for attempt in range(1, action.max_retries + 1):
+            if on_progress:
+                on_progress(
+                    f"{attempt}|||{action.max_retries}|||"
+                    f"Esperando: {action.image_template}"
+                )
+            result = self._executor.find_image(template, confidence=action.confidence)
+            if result is not None:
+                logger.info(
+                    "wait_image_or_reload: imagen encontrada en intento %d/%d",
+                    attempt, action.max_retries,
+                )
+                return
+            logger.info(
+                "wait_image_or_reload: intento %d/%d — imagen no encontrada, recargando",
+                attempt, action.max_retries,
+            )
+            self._executor.press_key(action.reload_key)
+            time.sleep(action.retry_interval_seconds)
+
+        screenshot_path = self._safe_screenshot()
+        raise PlaybackError(
+            f"Imagen '{action.image_template}' no apareció tras {action.max_retries} recargas "
+            f"(paso {index}). Verificar que el PNG está en {self._images_dir} y que la "
+            f"plataforma generó el archivo.",
+            screenshot_path=screenshot_path,
+        )
+
+    def _play_wait_download_or_reload(
+        self,
+        action: Action,
+        index: int,
+        on_progress: Callable[[str], None] | None = None,
+    ) -> None:
+        """
+        Espera que aparezca un archivo nuevo en Downloads, recargando entre intentos.
+
+        Por qué existe: Algunas plataformas generan reportes server-side sin dar
+        ninguna señal visual — el archivo simplemente aparece en Downloads cuando
+        el servidor termina de procesarlo. A diferencia de wait_image_or_reload,
+        este método detecta la descarga vía filesystem (DownloadWatcher) en lugar
+        de image matching, por lo que no requiere un PNG template.
+
+        Estrategia:
+            1. Toma snapshot del estado actual de Downloads al inicio del intento.
+            2. Llama wait_for_download() con timeout = retry_interval_seconds.
+            3. Si el archivo aparece → retorna (el runner lo detectará igualmente).
+            4. Si hay DownloadTimeoutError → recarga con reload_key y repite.
+            5. Si se agotan max_retries → PlaybackError con screenshot.
+
+        Args:
+            action: Action con max_retries, retry_interval_seconds, reload_key
+                    y file_extensions configurados.
+            index: Posición en la secuencia (para mensajes de error).
+            on_progress: Callback opcional que recibe progreso en formato
+                "attempt|||max_retries|||descripción".
+
+        Raises:
+            PlaybackError: Si el archivo no aparece tras max_retries intentos.
+        """
+        exts = action.file_extensions if action.file_extensions else None
+        interval = int(action.retry_interval_seconds)
+
+        for attempt in range(1, action.max_retries + 1):
+            if on_progress:
+                on_progress(
+                    f"{attempt}|||{action.max_retries}|||"
+                    f"Esperando descarga en Downloads"
+                )
+            watcher = DownloadWatcher(timeout_seconds=interval)
+            watcher.take_snapshot(extensions=exts)
+            try:
+                filepath = watcher.wait_for_download(extensions=exts)
+                logger.info(
+                    "wait_download_or_reload: archivo detectado en intento %d/%d: %s",
+                    attempt, action.max_retries, filepath.name,
+                )
+                return
+            except DownloadTimeoutError:
+                logger.info(
+                    "wait_download_or_reload: intento %d/%d — sin archivo, recargando",
+                    attempt, action.max_retries,
+                )
+                self._executor.press_key(action.reload_key)
+
+        screenshot_path = self._safe_screenshot()
+        exts_str = ", ".join(exts) if exts else ".xlsx, .csv"
+        total_secs = action.max_retries * action.retry_interval_seconds
+        raise PlaybackError(
+            f"El archivo no apareció en Downloads tras {action.max_retries} recargas "
+            f"(paso {index}). Tiempo total de espera: {total_secs:.0f}s. "
+            f"Extensiones monitoreadas: {exts_str}. "
+            f"Verificar que la plataforma generó el archivo.",
+            screenshot_path=screenshot_path,
+        )
 
     def _play_date_step(
         self,

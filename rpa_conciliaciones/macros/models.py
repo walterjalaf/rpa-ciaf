@@ -31,6 +31,12 @@ class Action:
     - 'key': usa keys (combinación de teclas, ej. ['ctrl', 'c'])
     - 'scroll': usa clicks (positivo=arriba), x, y opcionales
     - 'wait_image': usa image_template (nombre del PNG), confidence
+    - 'wait_image_or_reload': usa image_template, confidence, max_retries,
+      retry_interval_seconds, reload_key — busca el template y recarga la
+      página entre intentos hasta encontrarlo o agotar max_retries
+    - 'wait_download_or_reload': usa max_retries, retry_interval_seconds,
+      reload_key, file_extensions — detecta un archivo nuevo en Downloads
+      entre recargas sin depender de image matching
     - 'date_step': usa date_field ('date_from'|'date_to'), date_format
     - 'delay': usa delay (segundos a esperar)
     """
@@ -49,6 +55,10 @@ class Action:
     date_field: str | None = None     # 'date_from' | 'date_to' (solo date_step)
     date_format: str | None = None    # '%d/%m/%Y' | '%Y-%m-%d' (solo date_step)
     confidence: float = 0.8
+    max_retries: int = 10                  # intentos máximos (wait_image_or_reload / wait_download_or_reload)
+    retry_interval_seconds: float = 15.0  # segundos entre reintentos (wait_image_or_reload / wait_download_or_reload)
+    reload_key: str = "f5"                # tecla de recarga (wait_image_or_reload / wait_download_or_reload)
+    file_extensions: list[str] = field(default_factory=list)  # extensiones a monitorear (solo wait_download_or_reload); [] = default ['.xlsx','.csv']
 
 
 @dataclass

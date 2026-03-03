@@ -223,6 +223,98 @@ class MacroRecorder:
             "Marcador de fecha insertado: %s formato %s", date_field, date_format
         )
 
+    def mark_wait_image_or_reload(
+        self,
+        image_template: str,
+        max_retries: int = 10,
+        retry_interval_seconds: float = 15.0,
+        reload_key: str = "f5",
+    ) -> None:
+        """
+        Inserta manualmente una acción wait_image_or_reload en la grabación activa.
+
+        Uso: el técnico configura esta acción en el panel cuando la plataforma
+        genera el reporte en background. MacroPlayer buscará el template PNG
+        y recargará la página entre intentos hasta encontrarlo.
+
+        El PNG debe capturarse manualmente (Win+Shift+S) y guardarse en:
+            %LOCALAPPDATA%/rpa_conciliaciones/macros/images/
+
+        Args:
+            image_template: Nombre del archivo PNG (ej: 'boton_descargar_listo.png').
+            max_retries: Intentos máximos antes de lanzar PlaybackError.
+            retry_interval_seconds: Segundos de espera entre cada intento.
+            reload_key: Tecla que simula la recarga de página (default 'f5').
+
+        Raises:
+            MacroRecorderError: Si no hay grabación activa.
+        """
+        if not self._recording:
+            raise MacroRecorderError(
+                "No hay grabación activa. Llamar start() antes de mark_wait_image_or_reload()."
+            )
+        self._actions.append(Action(
+            type="wait_image_or_reload",
+            image_template=image_template,
+            max_retries=max_retries,
+            retry_interval_seconds=retry_interval_seconds,
+            reload_key=reload_key,
+        ))
+        logger.info(
+            "Acción wait_image_or_reload insertada: template='%s', %d reintentos, "
+            "intervalo=%.1fs, tecla='%s'",
+            image_template, max_retries, retry_interval_seconds, reload_key,
+        )
+
+    def mark_wait_download_or_reload(
+        self,
+        max_retries: int = 10,
+        retry_interval_seconds: float = 30.0,
+        reload_key: str = "f5",
+        file_extensions: list[str] | None = None,
+    ) -> None:
+        """
+        Inserta una acción wait_download_or_reload en la grabación activa.
+
+        Uso: el técnico configura esta acción después de hacer clic en "Exportar"
+        cuando la plataforma procesa el reporte en background. MacroPlayer esperará
+        que aparezca un archivo nuevo en la carpeta Downloads, recargando la página
+        entre intentos. No requiere un PNG template — detecta directamente en el
+        filesystem.
+
+        Diferencia con mark_wait_image_or_reload: no requiere captura manual
+        de ninguna imagen. El default de retry_interval_seconds es 30s
+        (más largo que wait_image_or_reload) porque el procesamiento server-side
+        puede tardar minutos.
+
+        Args:
+            max_retries: Intentos máximos antes de lanzar PlaybackError.
+            retry_interval_seconds: Segundos de espera por intento.
+            reload_key: Tecla que simula recarga de página (default 'f5').
+            file_extensions: Extensiones a monitorear (ej: ['.xlsx']). Si None,
+                DownloadWatcher usa su default ['.xlsx', '.csv'].
+
+        Raises:
+            MacroRecorderError: Si no hay grabación activa.
+        """
+        if not self._recording:
+            raise MacroRecorderError(
+                "No hay grabación activa. Llamar start() antes de mark_wait_download_or_reload()."
+            )
+        self._actions.append(Action(
+            type="wait_download_or_reload",
+            max_retries=max_retries,
+            retry_interval_seconds=retry_interval_seconds,
+            reload_key=reload_key,
+            file_extensions=file_extensions or [],
+        ))
+        logger.info(
+            "Acción wait_download_or_reload insertada: %d reintentos, "
+            "intervalo=%.1fs, tecla='%s', extensiones=%s",
+            max_retries, retry_interval_seconds, reload_key,
+            file_extensions or ["default (.xlsx, .csv)"],
+        )
+
     @property
     def is_recording(self) -> bool:
         """True si hay una grabación activa."""
