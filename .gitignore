@@ -88,6 +88,11 @@ $RECYCLE.BIN/
 *.tar.gz
 *.exe
 
+# ── Documentación interna (PRD, instrucciones de agente, versiones) ───────────
+# Estos archivos son contexto interno del proyecto, no código.
+# Contienen información confidencial y estratégica que no debe subirse al repo.
+*.md
+
 # ── Archivos de trabajo temporales ───────────────────────────────────────────
 cambios.txt
 *.tmp
