@@ -43,6 +43,7 @@ from sync.task_loader import TaskLoader
 from sync.updater import UpdaterClient
 from uploader.file_uploader import FileUploader
 from uploader.manual_uploader import ManualUploader
+from uploader.upload_queue import UploadQueue
 
 # ── Logging: consola + archivo ─────────────────────────────────
 _LOG_DIR = Path.home() / ".rpa_conciliaciones"
@@ -103,6 +104,7 @@ class Application:
         self._file_uploader = FileUploader(self._api_client)
         self._manual_uploader = ManualUploader(self._file_uploader)
         self._reporter = Reporter(self._api_client)
+        self._upload_queue = UploadQueue(self._file_uploader, self._reporter)
 
         # ── UI ─────────────────────────────────────────────────
         self._dashboard = Dashboard(
@@ -155,6 +157,7 @@ class Application:
             file_uploader=self._file_uploader,
             reporter=self._reporter,
             macro_storage=None,  # Activar en Feature 11
+            upload_queue=self._upload_queue,
         )
 
         summary = runner.run_all(

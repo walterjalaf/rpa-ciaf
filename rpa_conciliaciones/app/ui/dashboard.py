@@ -480,12 +480,20 @@ class Dashboard(ctk.CTk):
         """
         self._hide_execution_overlay()
         self._execute_btn.configure(state="normal")
-        success  = summary.get("success", 0)
-        total    = summary.get("total", 0)
-        elapsed  = summary.get("duration_seconds", 0)
-        self._progress_label.configure(
-            text=f"Finalizado — {success} de {total} tareas exitosas  ({elapsed:.0f}s)"
-        )
+        success          = summary.get("success", 0)
+        total            = summary.get("total", 0)
+        elapsed          = summary.get("duration_seconds", 0)
+        uploads_pending  = summary.get("uploads_pending", 0)
+        uploads_failed   = summary.get("uploads_failed", [])
+
+        base_text = f"Finalizado — {success} de {total} tareas exitosas  ({elapsed:.0f}s)"
+
+        if uploads_failed:
+            base_text += f"  |  {len(uploads_failed)} archivo(s) no se pudieron subir"
+        elif uploads_pending:
+            base_text += f"  |  {uploads_pending} archivo(s) pendientes de subida"
+
+        self._progress_label.configure(text=base_text)
 
     def update_task_status(self, task_id: str, status: str, message: str = "") -> None:
         """Actualiza el estado visual de una tarea (solo hilo principal)."""
@@ -525,9 +533,9 @@ class Dashboard(ctk.CTk):
         from date_handlers.date_resolver import DateResolver
         from macros.player import MacroPlayer
 
+        date_from, date_to = DateResolver.resolve("yesterday")
+        launcher = ChromeLauncher()
         try:
-            date_from, date_to = DateResolver.resolve("yesterday")
-            launcher = ChromeLauncher()
             launcher.launch(recording.platform_url)
             executor = PyAutoExecutor()
             player = MacroPlayer(executor)
@@ -535,6 +543,8 @@ class Dashboard(ctk.CTk):
             logger.info("Prueba de macro '%s' completada", recording.macro_name)
         except Exception as e:
             logger.error("Error en prueba de macro '%s': %s", recording.macro_name, e)
+        finally:
+            launcher.close()
 
     # ── Utilidades ──────────────────────────────────────────────
 

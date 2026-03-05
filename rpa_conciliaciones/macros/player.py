@@ -229,10 +229,13 @@ class MacroPlayer:
         template = self._images_dir / action.image_template
         for attempt in range(1, action.max_retries + 1):
             if on_progress:
-                on_progress(
-                    f"{attempt}|||{action.max_retries}|||"
-                    f"Esperando: {action.image_template}"
-                )
+                try:
+                    on_progress(
+                        f"{attempt}|||{action.max_retries}|||"
+                        f"Esperando: {action.image_template}"
+                    )
+                except Exception as cb_err:
+                    logger.warning("Callback on_progress falló (ignorado): %s", cb_err)
             result = self._executor.find_image(template, confidence=action.confidence)
             if result is not None:
                 logger.info(
@@ -292,10 +295,13 @@ class MacroPlayer:
 
         for attempt in range(1, action.max_retries + 1):
             if on_progress:
-                on_progress(
-                    f"{attempt}|||{action.max_retries}|||"
-                    f"Esperando descarga en Downloads"
-                )
+                try:
+                    on_progress(
+                        f"{attempt}|||{action.max_retries}|||"
+                        f"Esperando descarga en Downloads"
+                    )
+                except Exception as cb_err:
+                    logger.warning("Callback on_progress falló (ignorado): %s", cb_err)
             watcher = DownloadWatcher(timeout_seconds=interval)
             watcher.take_snapshot(extensions=exts)
             try:

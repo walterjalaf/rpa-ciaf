@@ -29,6 +29,7 @@ from uploader.file_uploader import FileUploader
 if TYPE_CHECKING:
     from macros.models import Recording
     from macros.storage import MacroStorage
+    from uploader.upload_queue import UploadQueue
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class TaskRunner:
         file_uploader: FileUploader,
         reporter: Reporter,
         macro_storage: MacroStorage | None = None,
+        upload_queue: UploadQueue | None = None,
     ) -> None:
         """
         Args:
@@ -75,12 +77,15 @@ class TaskRunner:
             reporter: Instancia de Reporter para telemetría y reporte de fallos.
             macro_storage: Almacenamiento de macros grabadas. Usado en Feature 12
                 para ejecutar tareas macro-based con MacroPlayer. Opcional.
+            upload_queue: Si se provee, los uploads se ejecutan en background
+                (Implementación E+F del PRD). Si es None, comportamiento actual.
         """
         self._task_list = task_list
         self._on_status_change = on_status_change
         self._file_uploader = file_uploader
         self._reporter = reporter
         self._macro_storage = macro_storage
+        self._upload_queue = upload_queue
 
     def run_all(
         self,
@@ -117,9 +122,12 @@ class TaskRunner:
         total_rows = 0
         global_start = time.monotonic()
 
+        if self._upload_queue:
+            self._upload_queue.start()
+
         logger.info(
-            "Iniciando ejecución de %d tareas (mode=%s)",
-            total, date_mode or "por tarea"
+            "Iniciando ejecución de %d tareas (mode=%s, pipeline=%s)",
+            total, date_mode or "por tarea", self._upload_queue is not None,
         )
 
         for task in self._task_list:
@@ -135,6 +143,21 @@ class TaskRunner:
 
         global_elapsed = time.monotonic() - global_start
 
+        # Esperar uploads pendientes si está en modo pipeline
+        uploads_pending = 0
+        uploads_failed: list[str] = []
+        if self._upload_queue:
+            upload_result = self._upload_queue.wait_all(timeout=60)
+            uploads_pending = len(upload_result.get("pending", []))
+            uploads_failed = upload_result.get("failed_ids", [])
+            if uploads_pending > 0 or uploads_failed:
+                logger.warning(
+                    "Uploads: %d completados, %d fallidos, %d pendientes de timeout",
+                    upload_result.get("uploaded", 0),
+                    len(uploads_failed),
+                    uploads_pending,
+                )
+
         summary = {
             "total": total,
             "success": success,
@@ -142,6 +165,8 @@ class TaskRunner:
             "failed_tasks": failed_tasks,
             "duration_seconds": round(global_elapsed, 1),
             "total_rows_processed": total_rows,
+            "uploads_pending": uploads_pending,
+            "uploads_failed": uploads_failed,
         }
 
         logger.info(
@@ -198,22 +223,38 @@ class TaskRunner:
             else:
                 filepath = task.run(date_from, date_to)
 
-            # Subir el archivo.
-            # NOTA: base_task.run() ya filtra por fecha para tareas no_filter,
-            # por lo que no_filter_context siempre es None aquí para evitar
-            # doble filtrado. Se usa getattr para ser extensible si alguna tarea
-            # concreta expone _handler_context explícitamente en el futuro.
+            elapsed = time.monotonic() - task_start
+            no_filter_ctx = getattr(task, "_handler_context", None)
+
+            if self._upload_queue:
+                # Modo pipeline (E+F): encolar upload en background y continuar
+                # inmediatamente. report_success lo llama el consumer tras subir.
+                # NOTA: no_filter_context siempre es None para tareas macro-based
+                # porque base_task.run() ya filtra; se pasa por compatibilidad.
+                self._upload_queue.enqueue(
+                    task_id=task.task_id,
+                    filepath=filepath,
+                    date_from=date_from,
+                    date_to=date_to,
+                    no_filter_context=no_filter_ctx,
+                    duration_seconds=elapsed,
+                )
+                self._on_status_change(
+                    task.task_id, DONE,
+                    f"Descargado en {elapsed:.0f}s — subiendo al servidor..."
+                )
+                return {"success": True, "row_count": 0}
+
+            # Modo síncrono (comportamiento original): subir y reportar antes
+            # de continuar con la siguiente tarea.
             self._file_uploader.upload(
                 task_id=task.task_id,
                 filepath=filepath,
                 date_from=date_from,
                 date_to=date_to,
-                no_filter_context=getattr(task, "_handler_context", None),
+                no_filter_context=no_filter_ctx,
             )
 
-            elapsed = time.monotonic() - task_start
-
-            # Reportar éxito (no bloquea si falla)
             row_count = self._report_success(
                 task, filepath, date_from, date_to, elapsed
             )

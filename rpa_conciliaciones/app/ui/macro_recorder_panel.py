@@ -509,6 +509,7 @@ class MacroRecorderPanel(ctk.CTkFrame):
         popup.geometry("300x240")
         popup.resizable(False, False)
         popup.grab_set()
+        popup.protocol("WM_DELETE_WINDOW", popup.destroy)
 
         ctk.CTkFrame(popup, height=5, corner_radius=0, fg_color=_CIAF_BLUE).pack(fill="x")
 
@@ -547,17 +548,31 @@ class MacroRecorderPanel(ctk.CTkFrame):
         """
         self._recorder.pause()
 
+        # Siempre usar self como padre (CTkToplevel hijo de otro CTkToplevel es inestable en Windows)
         popup = ctk.CTkToplevel(self)
         popup.title("Capturar template")
-        popup.geometry("340x175")
         popup.resizable(False, False)
         popup.wm_attributes("-topmost", True)
+        # Sin grab_set(): el botón ⏹ Detener del toolbar debe seguir accesible
+
+        # Posicionar el popup junto al toolbar flotante para garantizar visibilidad sobre Chrome
+        if self._recording_toolbar and self._recording_toolbar.winfo_exists():
+            tx = self._recording_toolbar.winfo_x()
+            ty = self._recording_toolbar.winfo_y()
+            popup.geometry(f"340x200+{tx}+{ty + 80}")
+        else:
+            # Centrar en pantalla como fallback
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            popup.geometry(f"340x200+{(sw - 340) // 2}+{(sh - 200) // 2}")
+
+        popup.lift()          # forzar encima de todas las ventanas
         popup.focus_force()
 
         # Estado compartido entre fases (listas de 1 elemento evitan nonlocal)
         _screenshot: list[Image.Image] = []
         _selection: list[tuple[int, int, int, int]] = []  # (x1,y1,x2,y2) coords reales
-        _scale: list[float] = [1.0]
+        _scale: list[tuple[float, float]] = [(1.0, 1.0)]
         _adv_fields: dict[str, ctk.CTkEntry] = {}
 
         def _resume_and_destroy() -> None:
@@ -577,8 +592,16 @@ class MacroRecorderPanel(ctk.CTkFrame):
 
         def _build_phase1() -> None:
             _clear()
-            popup.geometry("340x175")
+            # Reposicionar al regresar a fase 1 para mantenerse visible junto al toolbar
+            if self._recording_toolbar and self._recording_toolbar.winfo_exists():
+                tx = self._recording_toolbar.winfo_x()
+                ty = self._recording_toolbar.winfo_y()
+                popup.geometry(f"340x200+{tx}+{ty + 80}")
+            else:
+                popup.geometry("340x200")
             popup.resizable(False, False)
+            popup.lift()
+            popup.focus_force()
 
             ctk.CTkFrame(popup, height=5, corner_radius=0, fg_color=_COLOR_WARN).pack(fill="x")
             ctk.CTkLabel(
@@ -602,15 +625,30 @@ class MacroRecorderPanel(ctk.CTkFrame):
             )
             countdown_lbl.pack(padx=16, anchor="w")
 
+            btn_row = ctk.CTkFrame(popup, fg_color="transparent")
+            btn_row.pack(fill="x", padx=16, pady=(4, 12))
+            btn_row.columnconfigure(0, weight=1)
+
             capture_btn = ctk.CTkButton(
-                popup,
+                btn_row,
                 text="📷  Capturar en 3 segundos",
                 height=36, corner_radius=8,
                 font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
                 fg_color=(_COLOR_WARN, "#8B4A00"),
                 hover_color=("orange3", "#6B3800"),
             )
-            capture_btn.pack(fill="x", padx=16, pady=(4, 12))
+            capture_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+            ctk.CTkButton(
+                btn_row,
+                text="✕",
+                width=36, height=36, corner_radius=8,
+                font=ctk.CTkFont(family="Segoe UI", size=12),
+                fg_color=("gray85", "#2A3340"),
+                hover_color=("gray75", "#323E4D"),
+                text_color=("gray20", "gray80"),
+                command=_resume_and_destroy,
+            ).grid(row=0, column=1, sticky="e")
 
             def _countdown(n: int) -> None:
                 if n > 0:
@@ -622,17 +660,24 @@ class MacroRecorderPanel(ctk.CTkFrame):
                     popup.after(50, _do_capture)
 
             def _do_capture() -> None:
+                success = False
                 try:
                     popup.withdraw()
                     popup.update()
-                    time.sleep(0.35)
+                    time.sleep(0.5)          # 0.5s: margen para que el popup desaparezca visualmente
                     img = pyautogui.screenshot()
                     _screenshot.clear()
                     _screenshot.append(img)
+                    success = True
                 finally:
-                    popup.deiconify()
-                    popup.focus_force()
-                _build_phase2()
+                    try:
+                        popup.deiconify()
+                        popup.update()       # fuerza repaint antes de reconstruir widgets
+                        popup.focus_force()
+                    except Exception:
+                        return               # popup fue destruido por el usuario, no continuar
+                if success:
+                    _build_phase2()
 
             capture_btn.configure(
                 command=lambda: (capture_btn.configure(state="disabled"), _countdown(3))
@@ -653,10 +698,13 @@ class MacroRecorderPanel(ctk.CTkFrame):
             factor = min(max_w / screen_w, max_h / screen_h)
             disp_w = int(screen_w * factor)
             disp_h = int(screen_h * factor)
-            _scale[0] = 1.0 / factor  # multiplica coords canvas → coords reales
+            x_scale = screen_w / disp_w   # escala canvas→real en X
+            y_scale = screen_h / disp_h   # escala canvas→real en Y
+            _scale[0] = (x_scale, y_scale)
 
             popup.geometry(f"{disp_w + 20}x{disp_h + 130}")
             popup.resizable(True, True)
+            popup.update_idletasks()         # aplica geometría antes de empaquetar widgets
 
             ctk.CTkFrame(popup, height=5, corner_radius=0, fg_color=_COLOR_WARN).pack(fill="x")
             ctk.CTkLabel(
@@ -678,6 +726,7 @@ class MacroRecorderPanel(ctk.CTkFrame):
                 cursor="crosshair", highlightthickness=0,
             )
             canvas.pack()
+            canvas.focus_set()               # asegura que el canvas recibe eventos de mouse
             canvas.create_image(0, 0, anchor="nw", image=tk_img)
             canvas._tk_img = tk_img  # evitar garbage collection
 
@@ -787,11 +836,14 @@ class MacroRecorderPanel(ctk.CTkFrame):
                         text_color=_COLOR_ERROR,
                     )
                     return
-                sc = _scale[0]
+                x_sc, y_sc = _scale[0]
                 _selection.clear()
-                _selection.append((int(x0 * sc), int(y0 * sc), int(x1 * sc), int(y1 * sc)))
+                _selection.append((
+                    int(x0 * x_sc), int(y0 * y_sc),
+                    int(x1 * x_sc), int(y1 * y_sc),
+                ))
                 sel_lbl.configure(
-                    text=f"✓ Selección: {int((x1-x0)*sc)} × {int((y1-y0)*sc)} px — listo",
+                    text=f"✓ Selección: {int((x1-x0)*x_sc)} × {int((y1-y0)*y_sc)} px — listo",
                     text_color=_COLOR_OK,
                 )
                 insert_btn.configure(state="normal")
@@ -848,11 +900,17 @@ class MacroRecorderPanel(ctk.CTkFrame):
 
         No requiere PNG — detecta el archivo directamente en la carpeta Downloads.
         """
+        self._recorder.pause()
+
         popup = ctk.CTkToplevel(self)
         popup.title("Esperar descarga o recargar")
         popup.geometry("360x360")
         popup.resizable(False, False)
         popup.grab_set()
+        popup.protocol(
+            "WM_DELETE_WINDOW",
+            lambda: (self._recorder.resume(), popup.destroy()),
+        )
 
         ctk.CTkFrame(popup, height=5, corner_radius=0, fg_color=_CIAF_BLUE).pack(fill="x")
 
@@ -936,6 +994,7 @@ class MacroRecorderPanel(ctk.CTkFrame):
             ext_raw = ext_entry.get().strip()
             extensions = [e.strip() for e in ext_raw.split() if e.strip()] if ext_raw else None
             reload_key = key_entry.get().strip() or "f5"
+            self._recorder.resume()
             popup.destroy()
             try:
                 self._recorder.mark_wait_download_or_reload(

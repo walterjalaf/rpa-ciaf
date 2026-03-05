@@ -13,22 +13,7 @@ from datetime import datetime
 
 # ── Respuesta simulada de GET /rpa/tasks ───────────────────────
 
-MOCK_TASK_LIST: list[dict] = [
-    {
-        "task_id": "mercadopago_movimientos",
-        "task_name": "Mercado Pago — Movimientos",
-        "platform": "mercadopago",
-        "hash": "mock_hash_mp_001",
-        "active": True,
-    },
-    {
-        "task_id": "galicia_movimientos",
-        "task_name": "Banco Galicia — Extracto",
-        "platform": "galicia",
-        "hash": "mock_hash_gal_001",
-        "active": True,
-    },
-]
+MOCK_TASK_LIST: list[dict] = []
 
 
 # ── Respuesta simulada de GET /rpa/version ─────────────────────

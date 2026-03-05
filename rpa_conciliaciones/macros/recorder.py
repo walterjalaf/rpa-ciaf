@@ -59,6 +59,7 @@ _MODIFIER_KEYS = frozenset({
 # Teclas especiales que se graban como Action(type='key', keys=['nombre'])
 _SPECIAL_KEYS = frozenset({
     "enter", "tab", "backspace", "delete", "escape",
+    "space",
     "home", "end", "page_up", "page_down",
     "up", "down", "left", "right",
     "f1", "f2", "f3", "f4", "f5", "f6",
@@ -447,9 +448,13 @@ class MacroRecorder:
             self._actions.append(Action(type="key", keys=[key.name]))
             return
 
-        # Carácter normal
+        # Carácter normal — coalescer en el action anterior si es consecutivo
         if hasattr(key, "char") and key.char:
-            self._actions.append(Action(type="type", text=key.char))
+            if self._actions and self._actions[-1].type == "type":
+                prev = self._actions[-1]
+                self._actions[-1] = Action(type="type", text=(prev.text or "") + key.char)
+            else:
+                self._actions.append(Action(type="type", text=key.char))
 
     def _on_key_release(self, key: pynput.keyboard.Key) -> None:
         """Limpia el estado de modificadores al soltar una tecla."""
