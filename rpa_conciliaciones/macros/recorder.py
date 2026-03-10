@@ -30,6 +30,7 @@ import logging
 import math
 import time
 from datetime import datetime
+from queue import Empty, Queue
 
 import pynput
 import pynput.keyboard
@@ -101,6 +102,7 @@ class MacroRecorder:
         self._pending_date_step: bool = False      # True mientras el técnico escribe el placeholder
         self._current_modifiers: set[str] = set()  # Modificadores actualmente presionados
         self._paused: bool = False                 # True mientras la UI muestra un popup de configuración
+        self._hotkey_queue: Queue[str] = Queue()   # Puente thread-safe entre pynput y la UI
 
     def start(
         self,
@@ -341,6 +343,42 @@ class MacroRecorder:
         self._actions.append(Action(type="delay", delay=seconds))
         logger.info("Pausa de %.1fs insertada en la grabación.", seconds)
 
+    def mark_key(self, keys: list[str]) -> None:
+        """
+        Inserta manualmente una acción de tecla en la grabación activa.
+
+        Uso: el botón "Recargar (F5)" del toolbar llama mark_key(["f5"])
+        para insertar el mismo Action que se graba al presionar F5 físicamente.
+        Útil cuando el foco está en el toolbar y pynput no captura la tecla.
+
+        Args:
+            keys: Lista de teclas (ej: ["f5"], ["ctrl", "c"]).
+
+        Raises:
+            MacroRecorderError: Si no hay grabación activa.
+        """
+        if not self._recording:
+            raise MacroRecorderError(
+                "No hay grabación activa. Llamar start() antes de mark_key()."
+            )
+        self._actions.append(Action(type="key", keys=keys))
+        logger.info("Tecla insertada manualmente: %s", "+".join(keys))
+
+    def poll_hotkey(self) -> str | None:
+        """
+        Extrae el próximo hotkey de la cola thread-safe.
+
+        Llamar desde el hilo principal (en _update_recording_ui) para
+        procesar hotkeys capturados por pynput en su thread background.
+
+        Returns:
+            String del hotkey (ej: "f8") o None si la cola está vacía.
+        """
+        try:
+            return self._hotkey_queue.get_nowait()
+        except Empty:
+            return None
+
     def pause(self) -> None:
         """
         Suspende temporalmente la captura de eventos.
@@ -455,6 +493,11 @@ class MacroRecorder:
         # Ignorar teclas mientras el técnico escribe el placeholder de fecha
         if self._pending_date_step:
             return
+
+        # F8: señalizar al hilo principal para abrir el picker de descarga
+        if hasattr(key, "name") and key.name == "f8":
+            self._hotkey_queue.put("f8")
+            return  # no grabar como key action
 
         # F9: insertar delay de 2s sin pausar el recorder
         if hasattr(key, "name") and key.name == "f9":

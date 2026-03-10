@@ -656,7 +656,7 @@ class MacroRecorderPanel(ctk.CTkFrame):
 
         # Posición: esquina superior derecha de la pantalla
         screen_w = self.winfo_screenwidth()
-        toolbar.geometry(f"310x72+{screen_w - 320}+10")
+        toolbar.geometry(f"310x102+{screen_w - 320}+10")
 
         # ── Fondo con borde rojo para señalar "grabando" ──────────────────
         outer = ctk.CTkFrame(
@@ -709,6 +709,7 @@ class MacroRecorderPanel(ctk.CTkFrame):
         btn_row.pack(fill="x", padx=8, pady=(0, 6))
         btn_row.columnconfigure((0, 1), weight=1)
 
+        # row=0, col=0 — Esperar 2s
         ctk.CTkButton(
             btn_row,
             text="⏳ Esperar 2s (F9)",
@@ -717,8 +718,31 @@ class MacroRecorderPanel(ctk.CTkFrame):
             fg_color=(_COLOR_WARN, "#8B4A00"),
             hover_color=("orange3", "#6B3800"),
             command=lambda: self._recorder.mark_delay(2.0),
-        ).grid(row=0, column=0, padx=(0, 3), sticky="ew")
+        ).grid(row=0, column=0, padx=(0, 3), pady=(0, 3), sticky="ew")
 
+        # row=0, col=1 — Esperar descarga (F8)
+        ctk.CTkButton(
+            btn_row,
+            text="⬇ Esperar descarga (F8)",
+            height=26, corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            fg_color=(_CIAF_BLUE, _CIAF_BLUE_HOVER),
+            hover_color=(_CIAF_BLUE_HOVER, "#061E35"),
+            command=self._show_wait_download_picker,
+        ).grid(row=0, column=1, padx=(3, 0), pady=(0, 3), sticky="ew")
+
+        # row=1, col=0 — Recargar (F5)
+        ctk.CTkButton(
+            btn_row,
+            text="🔄 Recargar (F5)",
+            height=26, corner_radius=6,
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            fg_color=(_COLOR_WARN, "#8B4A00"),
+            hover_color=("orange3", "#6B3800"),
+            command=lambda: self._recorder.mark_key(["f5"]),
+        ).grid(row=1, column=0, padx=(0, 3), sticky="ew")
+
+        # row=1, col=1 — Detener
         ctk.CTkButton(
             btn_row,
             text="⏹ Detener",
@@ -727,7 +751,7 @@ class MacroRecorderPanel(ctk.CTkFrame):
             fg_color=(_COLOR_ERROR, _COLOR_ERROR_HOV),
             hover_color=(_COLOR_ERROR_HOV, "#A01B28"),
             command=self._on_stop_click,
-        ).grid(row=0, column=1, padx=(3, 0), sticky="ew")
+        ).grid(row=1, column=1, padx=(3, 0), sticky="ew")
 
         # ── Lógica de arrastre ───────────────────────────────────────────
         _drag: dict[str, int] = {"x": 0, "y": 0}
@@ -819,6 +843,11 @@ class MacroRecorderPanel(ctk.CTkFrame):
         current = self._recording_indicator.cget("text_color")
         next_color = "#FF6B6B" if current == _COLOR_ERROR else _COLOR_ERROR
         self._recording_indicator.configure(text_color=next_color)
+
+        # Polling de hotkeys capturados por pynput en su thread background
+        hotkey = self._recorder.poll_hotkey()
+        if hotkey == "f8" and not self._recorder.is_paused:
+            self._show_wait_download_picker()
 
         self._timer_job = self.after(500, self._update_recording_ui)
 
