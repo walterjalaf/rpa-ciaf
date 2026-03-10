@@ -37,13 +37,15 @@ from config import settings
 from app.ui.date_selector import DateSelector
 from app.ui.session_panel import SessionPanel
 from app.ui.task_status import TaskStatusRow
+from app.ui.task_manager_panel import TaskManagerPanel
+from macros.storage import MacroStorage
+from macros.task_plan_store import TaskPlanStore
 
 # Ruta absoluta al directorio de assets (independiente del cwd)
 _ASSETS_DIR = Path(__file__).parent / "assets"
 
 if settings.SHOW_MACRO_TAB:
     from macros.recorder import MacroRecorder
-    from macros.storage import MacroStorage
     from app.ui.macro_recorder_panel import MacroRecorderPanel
     from app.ui.macro_list_panel import MacroListPanel
 
@@ -82,12 +84,16 @@ class Dashboard(ctk.CTk):
         tasks: list[dict],
         on_execute: Callable[[dict], None],
         on_manual_upload: Callable[[str, str], None],
+        plan_store: TaskPlanStore | None = None,
+        macro_storage: MacroStorage | None = None,
     ) -> None:
         """
         Args:
             tasks: Lista de dicts con task_id, task_name, platform_url.
             on_execute: Callback(selection_dict) al presionar "Ejecutar todo".
             on_manual_upload: Callback(task_id, task_name) para carga manual.
+            plan_store: Persistencia del plan de ejecución (TaskPlanStore).
+            macro_storage: Acceso a macros grabadas (MacroStorage).
         """
         super().__init__()
 
@@ -102,13 +108,19 @@ class Dashboard(ctk.CTk):
         self._on_execute       = on_execute
         self._on_manual_upload = on_manual_upload
         self._task_rows:    dict[str, TaskStatusRow] = {}
+        self._task_manager: TaskManagerPanel | None = None
         self._total_tasks   = len(tasks)
         self._completed     = 0
         self._status_queue: Queue[tuple[str, str, str]] = Queue()
+        self._plan_store    = plan_store or TaskPlanStore()
+        self._macro_storage = macro_storage or MacroStorage()
 
         # ── Grid principal responsivo ──────────────────────────
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)   # El cuerpo se expande
+
+        # ── Atajos de teclado para campos de texto ─────────────
+        self._setup_clipboard_bindings()
 
         # ── Construcción ───────────────────────────────────────
         self._build_header()
@@ -121,6 +133,53 @@ class Dashboard(ctk.CTk):
 
         self._build_footer()
         self._start_ui_polling()
+
+    def _setup_clipboard_bindings(self) -> None:
+        """
+        Registra atajos de teclado para copiar/pegar en todos los campos Entry.
+
+        Por qué existe: CustomTkinter en Windows no garantiza que los atajos
+        estándar del sistema operativo (Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A) queden
+        correctamente enlazados en los widgets Entry en todas las versiones de CTk.
+        Al registrarlos explícitamente en la clase 'Entry' a nivel de la ventana raíz,
+        cualquier CTkEntry de la aplicación los hereda automáticamente.
+
+        bind_class() reemplaza el binding existente — si ya existía el correcto,
+        este método simplemente lo reafirma sin efectos secundarios.
+        """
+        self.bind_class(
+            "Entry", "<Control-c>",
+            lambda e: e.widget.event_generate("<<Copy>>"),
+        )
+        self.bind_class(
+            "Entry", "<Control-v>",
+            lambda e: e.widget.event_generate("<<Paste>>"),
+        )
+        self.bind_class(
+            "Entry", "<Control-x>",
+            lambda e: e.widget.event_generate("<<Cut>>"),
+        )
+        self.bind_class(
+            "Entry", "<Control-a>",
+            lambda e: e.widget.select_range(0, "end"),
+        )
+        # Variantes con Mayúsculas activas
+        self.bind_class(
+            "Entry", "<Control-A>",
+            lambda e: e.widget.select_range(0, "end"),
+        )
+        self.bind_class(
+            "Entry", "<Control-C>",
+            lambda e: e.widget.event_generate("<<Copy>>"),
+        )
+        self.bind_class(
+            "Entry", "<Control-V>",
+            lambda e: e.widget.event_generate("<<Paste>>"),
+        )
+        self.bind_class(
+            "Entry", "<Control-X>",
+            lambda e: e.widget.event_generate("<<Cut>>"),
+        )
 
     # ══════════════════════════════════════════════════════════
     # Thread-safety con queue.Queue
@@ -149,17 +208,20 @@ class Dashboard(ctk.CTk):
 
     def _update_task_row(self, task_id: str, status: str, message: str) -> None:
         """Actualiza el estado visual de una tarea. Solo hilo principal."""
+        # Actualizar semáforo en el TaskManagerPanel
+        if self._task_manager:
+            self._task_manager.update_task_status(task_id, status, message)
+        # También actualizar TaskStatusRow legacy si existe
         row = self._task_rows.get(task_id)
-        if row is None:
-            logger.warning("Task row no encontrada: %s", task_id)
-            return
-        row.update_status(status, message)
+        if row is not None:
+            row.update_status(status, message)
         if status in ("done", "done_manual", "error"):
             self._completed += 1
-            progress = self._completed / max(self._total_tasks, 1)
+            total = self._task_manager.plan_count if self._task_manager else max(self._total_tasks, 1)
+            progress = self._completed / max(total, 1)
             self._progress_bar.set(progress)
             self._progress_label.configure(
-                text=f"{self._completed} de {self._total_tasks} tareas completadas"
+                text=f"{self._completed} de {total} tareas completadas"
             )
 
     # ══════════════════════════════════════════════════════════
@@ -283,7 +345,7 @@ class Dashboard(ctk.CTk):
 
     def _build_body(self, tasks: list[dict]) -> None:
         """
-        Cuerpo principal sin tabs: session + date + task list en una columna.
+        Cuerpo principal sin tabs: session + date + task manager en una columna.
         Usa CTkScrollableFrame para adaptarse al número de tareas.
         """
         scroll = ctk.CTkScrollableFrame(
@@ -297,7 +359,7 @@ class Dashboard(ctk.CTk):
 
         self._build_session_panel(scroll)
         self._build_date_selector(scroll)
-        self._build_task_list(tasks, scroll)
+        self._build_task_manager(tasks, scroll)
 
     def _build_tabview(self, tasks: list[dict]) -> None:
         """Crea CTkTabview con tabs 'Tareas' y 'Macros' (solo técnicos)."""
@@ -319,7 +381,7 @@ class Dashboard(ctk.CTk):
 
         self._build_session_panel(tab_tasks)
         self._build_date_selector(tab_tasks)
-        self._build_task_list(tasks, tab_tasks)
+        self._build_task_manager(tasks, tab_tasks)
         self._build_macro_tab(tab_macros)
 
     def _build_macro_tab(self, parent) -> None:
@@ -347,6 +409,18 @@ class Dashboard(ctk.CTk):
         )
         recorder_panel.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
         list_panel.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
+
+    def _build_task_manager(self, tasks: list[dict], parent) -> None:
+        """Instancia TaskManagerPanel y lo empaqueta en el parent."""
+        self._task_manager = TaskManagerPanel(
+            parent=parent,
+            plan_store=self._plan_store,
+            macro_storage=self._macro_storage,
+            task_schemas=tasks,
+            on_manual_upload=self._on_manual_upload,
+        )
+        self._task_manager.pack(fill="x", padx=16, pady=(0, 12))
+        self._total_tasks = self._task_manager.plan_count
 
     def _build_session_panel(self, parent) -> None:
         """Card de estado de sesiones."""
@@ -428,6 +502,7 @@ class Dashboard(ctk.CTk):
         self._execute_btn = ctk.CTkButton(
             inner,
             text="▶   Ejecutar todo",
+            state="disabled",
             font=ctk.CTkFont(family="Segoe UI", size=15, weight="bold"),
             height=48, width=240,
             corner_radius=10,
@@ -492,7 +567,10 @@ class Dashboard(ctk.CTk):
         Contrato público — firma no puede cambiar.
         """
         self._hide_execution_overlay()
-        self._execute_btn.configure(state="normal")
+        # Botón inhabilitado temporalmente — no reactivar al terminar
+        # self._execute_btn.configure(state="normal")
+        if self._task_manager:
+            self._task_manager.set_executing(False)
         success          = summary.get("success", 0)
         total            = summary.get("total", 0)
         elapsed          = summary.get("duration_seconds", 0)
@@ -527,6 +605,12 @@ class Dashboard(ctk.CTk):
             row.update_status("pending")
 
         selection = self._date_selector.get_selection()
+
+        if self._task_manager:
+            self._total_tasks = self._task_manager.plan_count
+            selection["plan"] = self._task_manager.get_plan()
+            self._task_manager.set_executing(True)
+
         self._show_execution_overlay()
         self._on_execute(selection)
 

@@ -38,9 +38,12 @@ from app.ui.alert_modal import AlertModal
 from app.ui.dashboard import Dashboard
 from config.settings import LOG_LEVEL
 from core.reporter import Reporter
+from macros.storage import MacroStorage
+from macros.task_plan_store import TaskPlanStore, TaskPlanEntry
 from sync.api_client import ApiClient
 from sync.task_loader import TaskLoader
 from sync.updater import UpdaterClient
+from tasks.macro_task import MacroTask
 from uploader.file_uploader import FileUploader
 from uploader.manual_uploader import ManualUploader
 from uploader.upload_queue import UploadQueue
@@ -106,11 +109,17 @@ class Application:
         self._reporter = Reporter(self._api_client)
         self._upload_queue = UploadQueue(self._file_uploader, self._reporter)
 
+        # ── Macros y plan de ejecución ─────────────────────────
+        self._macro_storage   = MacroStorage()
+        self._task_plan_store = TaskPlanStore()
+
         # ── UI ─────────────────────────────────────────────────
         self._dashboard = Dashboard(
             tasks=self._task_schemas,
             on_execute=self._handle_execute,
             on_manual_upload=self._handle_manual_upload,
+            plan_store=self._task_plan_store,
+            macro_storage=self._macro_storage,
         )
 
         # ── Verificar actualizaciones ──────────────────────────
@@ -139,7 +148,13 @@ class Application:
         """Ejecuta las tareas en un thread secundario."""
         from core.runner import TaskRunner
 
-        task_instances = self._load_task_instances()
+        plan: list[TaskPlanEntry] = selection.pop("plan", [])
+
+        if plan:
+            task_instances = self._build_instances_from_plan(plan)
+        else:
+            task_instances = self._load_task_instances()
+
         if not task_instances:
             self._dashboard.after(0, self._dashboard.on_execution_complete, {
                 "total": 0, "success": 0, "failed": 0,
@@ -150,13 +165,20 @@ class Application:
 
         def on_status_change(task_id: str, status: str, msg: str) -> None:
             self._dashboard.on_status_change(task_id, status, msg)
+            # Persistir semáforo: done / error
+            if status in ("done", "error"):
+                entry = next(
+                    (e for e in plan if e.task_id == task_id), None
+                )
+                if entry:
+                    self._task_plan_store.update_status(entry.entry_id, status)
 
         runner = TaskRunner(
             task_list=task_instances,
             on_status_change=on_status_change,
             file_uploader=self._file_uploader,
             reporter=self._reporter,
-            macro_storage=None,  # Activar en Feature 11
+            macro_storage=self._macro_storage,
             upload_queue=self._upload_queue,
         )
 
@@ -167,6 +189,77 @@ class Application:
         )
 
         self._dashboard.after(0, self._dashboard.on_execution_complete, summary)
+
+    def _build_instances_from_plan(self, plan: list[TaskPlanEntry]) -> list:
+        """
+        Construye la lista de instancias de BaseTask en el orden del plan.
+
+        Para entradas de tipo 'schema' usa _load_schema_task().
+        Para entradas de tipo 'macro' envuelve la Recording en MacroTask.
+        """
+        instances = []
+        for entry in plan:
+            try:
+                if entry.item_type == "schema":
+                    inst = self._load_schema_task(entry.task_id)
+                else:
+                    recording = self._macro_storage.load(entry.macro_id)
+                    inst = MacroTask(recording) if recording else None
+
+                if inst:
+                    instances.append(inst)
+                else:
+                    logger.warning(
+                        "No se pudo cargar tarea '%s' (tipo=%s)",
+                        entry.task_id, entry.item_type,
+                    )
+            except Exception as e:
+                logger.error(
+                    "Error construyendo instancia para '%s': %s", entry.task_id, e
+                )
+        return instances
+
+    def _load_schema_task(self, task_id: str):
+        """Carga la instancia de BaseTask para un task_id de schema."""
+        tasks_dir = _PROJECT_ROOT / "tasks"
+
+        schema = next(
+            (s for s in self._task_schemas if s.get("task_id") == task_id), None
+        )
+        if schema is None:
+            logger.warning("Schema no encontrado para task_id '%s'", task_id)
+            return None
+
+        platform = schema.get("platform", "")
+        task_module_path = tasks_dir / platform / "task.py"
+
+        if not task_module_path.exists():
+            logger.warning(
+                "No se encontró task.py para plataforma '%s'", platform
+            )
+            return None
+
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                f"tasks.{platform}.task", task_module_path
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            from tasks.base_task import BaseTask
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if (isinstance(attr, type)
+                        and issubclass(attr, BaseTask)
+                        and attr is not BaseTask):
+                    logger.debug("Task cargada: %s", attr_name)
+                    return attr()
+        except Exception as e:
+            logger.error(
+                "Error cargando task de '%s': %s", platform, e
+            )
+        return None
 
     def _handle_manual_upload(self, task_id: str, task_name: str) -> None:
         """Handler de carga manual desde la UI."""
@@ -233,47 +326,15 @@ class Application:
 
     def _load_task_instances(self) -> list:
         """
-        Carga las instancias de BaseTask desde los schemas.
+        Carga las instancias de BaseTask desde todos los schemas (sin plan).
 
-        Busca el task.py de cada plataforma y lo importa dinámicamente.
+        Usado como fallback cuando no hay plan de ejecución definido.
         """
         instances = []
-        tasks_dir = _PROJECT_ROOT / "tasks"
-
         for schema in self._task_schemas:
-            platform = schema.get("platform", "")
-            task_module_path = tasks_dir / platform / "task.py"
-
-            if not task_module_path.exists():
-                logger.warning(
-                    "No se encontró task.py para plataforma '%s'", platform
-                )
-                continue
-
-            try:
-                import importlib.util
-                spec = importlib.util.spec_from_file_location(
-                    f"tasks.{platform}.task", task_module_path
-                )
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                # Buscar la primera subclase de BaseTask en el módulo
-                from tasks.base_task import BaseTask
-                for attr_name in dir(module):
-                    attr = getattr(module, attr_name)
-                    if (isinstance(attr, type)
-                            and issubclass(attr, BaseTask)
-                            and attr is not BaseTask):
-                        instances.append(attr())
-                        logger.debug("Task cargada: %s", attr_name)
-                        break
-
-            except Exception as e:
-                logger.error(
-                    "Error cargando task de '%s': %s", platform, e
-                )
-
+            inst = self._load_schema_task(schema.get("task_id", ""))
+            if inst:
+                instances.append(inst)
         return instances
 
 

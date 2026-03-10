@@ -125,18 +125,35 @@ class PyAutoExecutor:
         Más fiable que type_text() para texto largo, caracteres especiales
         o campos que bloquean el ingreso tecla por tecla.
 
+        Usa keyDown/keyUp con try/finally para garantizar que Ctrl nunca quede
+        atrapado a nivel de OS si ocurre una excepción — pyautogui.hotkey() no
+        tiene esta garantía internamente.
+
         Args:
             text: Texto a pegar.
         """
         logger.debug(f"paste_text('{text[:30]}{'...' if len(text) > 30 else ''}')")
         pyperclip.copy(text)
-        pyautogui.hotkey("ctrl", "v")
+        try:
+            pyautogui.keyDown("ctrl")
+            pyautogui.keyDown("v")
+        finally:
+            try:
+                pyautogui.keyUp("v")
+            except Exception as e:
+                logger.warning("paste_text: no se pudo soltar 'v': %s", e)
+            try:
+                pyautogui.keyUp("ctrl")
+            except Exception as e:
+                logger.warning("paste_text: no se pudo soltar 'ctrl': %s", e)
 
     def press_key(self, *keys: str) -> None:
         """
         Presiona una tecla o combinación de teclas.
 
-        Con una tecla: pyautogui.press(key). Con múltiples: pyautogui.hotkey(*keys).
+        Con una tecla: pyautogui.press(key). Con múltiples: keyDown/keyUp con
+        try/finally para liberar modificadores incluso si ocurre una excepción
+        (ej: FailSafeException). pyautogui.hotkey() no tiene esta garantía.
 
         Args:
             *keys: Nombres de teclas según pyautogui (ej: 'enter', 'tab', 'ctrl', 'c').
@@ -149,8 +166,20 @@ class PyAutoExecutor:
         logger.debug(f"press_key{keys}")
         if len(keys) == 1:
             pyautogui.press(keys[0])
-        else:
-            pyautogui.hotkey(*keys)
+            return
+        pressed: list[str] = []
+        try:
+            for k in keys:
+                pyautogui.keyDown(k)
+                pressed.append(k)
+        finally:
+            for k in reversed(pressed):
+                try:
+                    pyautogui.keyUp(k)
+                except Exception as e:
+                    logger.warning(
+                        "press_key: no se pudo soltar la tecla '%s': %s", k, e
+                    )
 
     # ── Gestión de foco de ventana ─────────────────────────────────────────
 
