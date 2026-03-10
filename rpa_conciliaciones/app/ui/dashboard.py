@@ -92,7 +92,7 @@ class Dashboard(ctk.CTk):
         super().__init__()
 
         # ── Configuración de la ventana ────────────────────────
-        self.title("RPA Conciliaciones — CIAF")
+        self.title("RPA - Ciaf")
         self.geometry("960x700")
         self.minsize(800, 580)
         ctk.set_appearance_mode("light")
@@ -230,7 +230,7 @@ class Dashboard(ctk.CTk):
 
         ctk.CTkLabel(
             title_col,
-            text="RPA Conciliaciones",
+            text="RPA - Ciaf",
             font=ctk.CTkFont(family="Segoe UI", size=17, weight="bold"),
             text_color="white",
         ).pack(anchor="w")
@@ -301,13 +301,15 @@ class Dashboard(ctk.CTk):
 
     def _build_tabview(self, tasks: list[dict]) -> None:
         """Crea CTkTabview con tabs 'Tareas' y 'Macros' (solo técnicos)."""
-        tabview = ctk.CTkTabview(
+        self._tabview = ctk.CTkTabview(
             self,
             fg_color=("gray95", "gray12"),
             segmented_button_selected_color=_CIAF_BLUE,
             segmented_button_selected_hover_color=_CIAF_BLUE_HOVER,
             text_color=("gray10", "gray90"),
+            command=self._on_tab_change,
         )
+        tabview = self._tabview
         tabview.grid(row=2, column=0, sticky="nsew", padx=0, pady=0)
 
         tab_tasks  = tabview.add("Tareas")
@@ -404,15 +406,16 @@ class Dashboard(ctk.CTk):
         Footer con el CTA principal (Ejecutar todo) y barra de progreso.
         Siempre visible, no scrollea.
         """
-        footer = ctk.CTkFrame(
+        self._footer = ctk.CTkFrame(
             self,
             fg_color=("white", "#161D28"),
             corner_radius=0,
             border_width=1,
             border_color=("gray85", "gray20"),
         )
-        footer.grid(row=3, column=0, sticky="ew")
-        footer.columnconfigure(0, weight=1)
+        self._footer.grid(row=3, column=0, sticky="ew")
+        self._footer.columnconfigure(0, weight=1)
+        footer = self._footer
 
         # Contenedor interior centrado
         inner = ctk.CTkFrame(footer, fg_color="transparent")
@@ -449,6 +452,13 @@ class Dashboard(ctk.CTk):
             text_color=_CIAF_GRAY,
         )
         self._progress_label.pack()
+
+    def _on_tab_change(self) -> None:
+        """Muestra u oculta el footer según la tab activa."""
+        if self._tabview.get() == "Macros":
+            self._footer.grid_remove()
+        else:
+            self._footer.grid(row=3, column=0, sticky="ew")
 
     # ══════════════════════════════════════════════════════════
     # Métodos públicos (contratos que no pueden cambiar)
