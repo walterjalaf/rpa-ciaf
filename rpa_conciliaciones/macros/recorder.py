@@ -317,6 +317,30 @@ class MacroRecorder:
             file_extensions or ["default (.xlsx, .csv)"],
         )
 
+    def mark_delay(self, seconds: float = 2.0) -> None:
+        """
+        Inserta una pausa fija en la secuencia de acciones grabadas.
+
+        Uso: el técnico presiona F9 (o el botón '⏳ Esperar 2s') durante la
+        grabación para insertar una espera de N segundos que MacroPlayer
+        ejecutará con time.sleep() al reproducir la macro.
+
+        A diferencia de wait_image_or_reload, no requiere capturar ninguna
+        imagen ni pausar el recorder — se inserta instantáneamente.
+
+        Args:
+            seconds: Duración de la pausa en segundos (default 2.0).
+
+        Raises:
+            MacroRecorderError: Si no hay grabación activa.
+        """
+        if not self._recording:
+            raise MacroRecorderError(
+                "No hay grabación activa. Llamar start() antes de mark_delay()."
+            )
+        self._actions.append(Action(type="delay", delay=seconds))
+        logger.info("Pausa de %.1fs insertada en la grabación.", seconds)
+
     def pause(self) -> None:
         """
         Suspende temporalmente la captura de eventos.
@@ -430,6 +454,14 @@ class MacroRecorder:
 
         # Ignorar teclas mientras el técnico escribe el placeholder de fecha
         if self._pending_date_step:
+            return
+
+        # F9: insertar delay de 2s sin pausar el recorder
+        if hasattr(key, "name") and key.name == "f9":
+            try:
+                self.mark_delay(2.0)
+            except MacroRecorderError:
+                pass
             return
 
         # Combinación con modificadores (ej: Ctrl+C)

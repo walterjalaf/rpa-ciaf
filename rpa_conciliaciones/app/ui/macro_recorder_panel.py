@@ -27,13 +27,10 @@ import logging
 import time
 from collections.abc import Callable
 from datetime import datetime
-from pathlib import Path
 
 import customtkinter as ctk
-import pyautogui
 import pygetwindow as gw
 import tkinter as tk
-from PIL import Image, ImageTk
 
 from macros.date_step import DATE_FROM, DATE_TO, FORMATS_COMUNES
 from macros.exceptions import MacroRecorderError
@@ -276,12 +273,12 @@ class MacroRecorderPanel(ctk.CTkFrame):
 
         ctk.CTkButton(
             controls,
-            text="⏳  Esperar o recargar",
+            text="⏳  Esperar 2s (F9)",
             height=32, corner_radius=6,
             font=ctk.CTkFont(family="Segoe UI", size=11),
             fg_color=(_COLOR_WARN, "#8B4A00"),
             hover_color=("orange3", "#6B3800"),
-            command=self._show_wait_reload_picker,
+            command=lambda: self._recorder.mark_delay(2.0),
         ).grid(row=1, column=0, padx=(0, 4), pady=3, sticky="ew")
 
         ctk.CTkButton(
@@ -535,366 +532,6 @@ class MacroRecorderPanel(ctk.CTkFrame):
                 ),
             ).pack(fill="x", padx=16, pady=2)
 
-    def _show_wait_reload_picker(self) -> None:
-        """
-        Flujo de 2 fases para insertar una acción wait_image_or_reload.
-
-        Fase 1: Cuenta regresiva + captura automática de pantalla completa.
-        Fase 2: Canvas con el screenshot para selección visual de región.
-                El recorte se guarda automáticamente como PNG en macros/images/.
-
-        El recorder se pausa al abrir este popup para que los clics en la UI
-        no contaminen la grabación de la macro.
-        """
-        self._recorder.pause()
-
-        # Siempre usar self como padre (CTkToplevel hijo de otro CTkToplevel es inestable en Windows)
-        popup = ctk.CTkToplevel(self)
-        popup.title("Capturar template")
-        popup.resizable(False, False)
-        popup.wm_attributes("-topmost", True)
-        # Sin grab_set(): el botón ⏹ Detener del toolbar debe seguir accesible
-
-        # Posicionar el popup junto al toolbar flotante para garantizar visibilidad sobre Chrome
-        if self._recording_toolbar and self._recording_toolbar.winfo_exists():
-            tx = self._recording_toolbar.winfo_x()
-            ty = self._recording_toolbar.winfo_y()
-            popup.geometry(f"340x200+{tx}+{ty + 80}")
-        else:
-            # Centrar en pantalla como fallback
-            sw = self.winfo_screenwidth()
-            sh = self.winfo_screenheight()
-            popup.geometry(f"340x200+{(sw - 340) // 2}+{(sh - 200) // 2}")
-
-        popup.lift()          # forzar encima de todas las ventanas
-        popup.focus_force()
-
-        # Estado compartido entre fases (listas de 1 elemento evitan nonlocal)
-        _screenshot: list[Image.Image] = []
-        _selection: list[tuple[int, int, int, int]] = []  # (x1,y1,x2,y2) coords reales
-        _scale: list[tuple[float, float]] = [(1.0, 1.0)]
-        _adv_fields: dict[str, ctk.CTkEntry] = {}
-
-        def _resume_and_destroy() -> None:
-            self._recorder.resume()
-            try:
-                popup.destroy()
-            except Exception:
-                pass
-
-        popup.protocol("WM_DELETE_WINDOW", _resume_and_destroy)
-
-        def _clear() -> None:
-            for w in popup.winfo_children():
-                w.destroy()
-
-        # ── FASE 1 — Captura ─────────────────────────────────────────────
-
-        def _build_phase1() -> None:
-            _clear()
-            # Reposicionar al regresar a fase 1 para mantenerse visible junto al toolbar
-            if self._recording_toolbar and self._recording_toolbar.winfo_exists():
-                tx = self._recording_toolbar.winfo_x()
-                ty = self._recording_toolbar.winfo_y()
-                popup.geometry(f"340x200+{tx}+{ty + 80}")
-            else:
-                popup.geometry("340x200")
-            popup.resizable(False, False)
-            popup.lift()
-            popup.focus_force()
-
-            ctk.CTkFrame(popup, height=5, corner_radius=0, fg_color=_COLOR_WARN).pack(fill="x")
-            ctk.CTkLabel(
-                popup,
-                text="Capturar imagen de referencia",
-                font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
-                text_color=("gray10", "gray90"),
-            ).pack(pady=(10, 2), padx=16, anchor="w")
-            ctk.CTkLabel(
-                popup,
-                text="Posicioná Chrome con el elemento visible, luego presioná el botón.",
-                font=ctk.CTkFont(family="Segoe UI", size=10),
-                text_color=_CIAF_GRAY,
-                wraplength=308, justify="left",
-            ).pack(padx=16, anchor="w", pady=(0, 6))
-
-            countdown_lbl = ctk.CTkLabel(
-                popup, text="",
-                font=ctk.CTkFont(family="Segoe UI", size=10),
-                text_color=_COLOR_WARN,
-            )
-            countdown_lbl.pack(padx=16, anchor="w")
-
-            btn_row = ctk.CTkFrame(popup, fg_color="transparent")
-            btn_row.pack(fill="x", padx=16, pady=(4, 12))
-            btn_row.columnconfigure(0, weight=1)
-
-            capture_btn = ctk.CTkButton(
-                btn_row,
-                text="📷  Capturar en 3 segundos",
-                height=36, corner_radius=8,
-                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-                fg_color=(_COLOR_WARN, "#8B4A00"),
-                hover_color=("orange3", "#6B3800"),
-            )
-            capture_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-
-            ctk.CTkButton(
-                btn_row,
-                text="✕",
-                width=36, height=36, corner_radius=8,
-                font=ctk.CTkFont(family="Segoe UI", size=12),
-                fg_color=("gray85", "#2A3340"),
-                hover_color=("gray75", "#323E4D"),
-                text_color=("gray20", "gray80"),
-                command=_resume_and_destroy,
-            ).grid(row=0, column=1, sticky="e")
-
-            def _countdown(n: int) -> None:
-                if n > 0:
-                    countdown_lbl.configure(text=f"Capturando en {n}...")
-                    popup.after(1000, lambda: _countdown(n - 1))
-                else:
-                    countdown_lbl.configure(text="Capturando pantalla...")
-                    popup.update()
-                    popup.after(50, _do_capture)
-
-            def _do_capture() -> None:
-                success = False
-                try:
-                    popup.withdraw()
-                    popup.update()
-                    time.sleep(0.5)          # 0.5s: margen para que el popup desaparezca visualmente
-                    img = pyautogui.screenshot()
-                    _screenshot.clear()
-                    _screenshot.append(img)
-                    success = True
-                finally:
-                    try:
-                        popup.deiconify()
-                        popup.update()       # fuerza repaint antes de reconstruir widgets
-                        popup.focus_force()
-                    except Exception:
-                        return               # popup fue destruido por el usuario, no continuar
-                if success:
-                    _build_phase2()
-
-            capture_btn.configure(
-                command=lambda: (capture_btn.configure(state="disabled"), _countdown(3))
-            )
-
-        # ── FASE 2 — Selección de región ─────────────────────────────────
-
-        def _build_phase2() -> None:
-            _clear()
-            _adv_fields.clear()
-            _selection.clear()
-
-            img = _screenshot[0]
-            screen_w, screen_h = img.size
-
-            # Escalar el screenshot para que quepa en la ventana (max 600×360)
-            max_w, max_h = 600, 360
-            factor = min(max_w / screen_w, max_h / screen_h)
-            disp_w = int(screen_w * factor)
-            disp_h = int(screen_h * factor)
-            x_scale = screen_w / disp_w   # escala canvas→real en X
-            y_scale = screen_h / disp_h   # escala canvas→real en Y
-            _scale[0] = (x_scale, y_scale)
-
-            popup.geometry(f"{disp_w + 20}x{disp_h + 130}")
-            popup.resizable(True, True)
-            popup.update_idletasks()         # aplica geometría antes de empaquetar widgets
-
-            ctk.CTkFrame(popup, height=5, corner_radius=0, fg_color=_COLOR_WARN).pack(fill="x")
-            ctk.CTkLabel(
-                popup,
-                text="✂  Seleccioná el elemento a detectar",
-                font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
-                text_color=("gray10", "gray90"),
-            ).pack(pady=(8, 4), padx=10, anchor="w")
-
-            # Canvas con el screenshot escalado
-            canvas_host = ctk.CTkFrame(popup, fg_color=("gray30", "gray15"), corner_radius=4)
-            canvas_host.pack(padx=10, pady=(0, 4))
-
-            img_disp = img.resize((disp_w, disp_h), Image.LANCZOS)
-            tk_img = ImageTk.PhotoImage(img_disp)
-
-            canvas = tk.Canvas(
-                canvas_host, width=disp_w, height=disp_h,
-                cursor="crosshair", highlightthickness=0,
-            )
-            canvas.pack()
-            canvas.focus_set()               # asegura que el canvas recibe eventos de mouse
-            canvas.create_image(0, 0, anchor="nw", image=tk_img)
-            canvas._tk_img = tk_img  # evitar garbage collection
-
-            sel_lbl = ctk.CTkLabel(
-                popup,
-                text="Arrastrá para seleccionar el área del elemento",
-                font=ctk.CTkFont(family="Segoe UI", size=10),
-                text_color=_CIAF_GRAY,
-            )
-            sel_lbl.pack(padx=10, anchor="w")
-
-            # Fila inferior: botones + avanzado
-            adv_frame = ctk.CTkFrame(popup, fg_color="transparent")
-            bot_row = ctk.CTkFrame(popup, fg_color="transparent")
-            bot_row.pack(fill="x", padx=10, pady=(4, 8))
-            bot_row.columnconfigure(2, weight=1)
-
-            def _toggle_advanced() -> None:
-                if adv_frame.winfo_ismapped():
-                    adv_frame.pack_forget()
-                    return
-                # Construir campos si es la primera vez
-                if not _adv_fields:
-                    for col, (lbl, default, key) in enumerate([
-                        ("Intentos:", "10", "retries"),
-                        ("Intervalo s:", "15", "interval"),
-                        ("Tecla:", "f5", "key"),
-                    ]):
-                        c = ctk.CTkFrame(adv_frame, fg_color="transparent")
-                        c.grid(row=0, column=col, padx=4, sticky="nsew")
-                        ctk.CTkLabel(
-                            c, text=lbl,
-                            font=ctk.CTkFont(size=10),
-                            text_color=("gray20", "gray80"),
-                        ).pack(anchor="w")
-                        e = ctk.CTkEntry(c, height=26, corner_radius=4,
-                                         font=ctk.CTkFont(size=10))
-                        e.insert(0, default)
-                        e.pack(fill="x")
-                        _adv_fields[key] = e
-                    adv_frame.columnconfigure((0, 1, 2), weight=1)
-                adv_frame.pack(fill="x", padx=10, pady=(0, 2), before=bot_row)
-
-            insert_btn = ctk.CTkButton(
-                bot_row,
-                text="✓ Insertar",
-                height=28, corner_radius=6,
-                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                fg_color=(_COLOR_WARN, "#8B4A00"),
-                hover_color=("orange3", "#6B3800"),
-                state="disabled",
-                command=lambda: _on_insert(),
-            )
-            insert_btn.grid(row=0, column=2, sticky="e")
-
-            ctk.CTkButton(
-                bot_row,
-                text="↩ Recapturar",
-                height=28, corner_radius=6, width=90,
-                font=ctk.CTkFont(size=10),
-                fg_color="transparent",
-                border_width=1, border_color=(_CIAF_GRAY, _CIAF_GRAY),
-                text_color=("gray30", "gray70"),
-                hover_color=("gray92", "#2A3340"),
-                command=_build_phase1,
-            ).grid(row=0, column=0, padx=(0, 4), sticky="w")
-
-            ctk.CTkButton(
-                bot_row,
-                text="⚙ Avanzado",
-                height=28, corner_radius=6, width=80,
-                font=ctk.CTkFont(size=10),
-                fg_color=("gray88", "#2A3340"),
-                hover_color=("gray80", "#323E4D"),
-                text_color=("gray20", "gray80"),
-                command=_toggle_advanced,
-            ).grid(row=0, column=1, padx=(0, 4), sticky="w")
-
-            # Lógica de selección con el mouse
-            _drag: dict[str, int | None] = {"x0": 0, "y0": 0, "rect": None}
-
-            def _press(ev: tk.Event) -> None:
-                _drag["x0"] = ev.x
-                _drag["y0"] = ev.y
-                if _drag["rect"]:
-                    canvas.delete(_drag["rect"])
-                    _drag["rect"] = None
-                _selection.clear()
-                insert_btn.configure(state="disabled")
-
-            def _move(ev: tk.Event) -> None:
-                if _drag["rect"]:
-                    canvas.delete(_drag["rect"])
-                _drag["rect"] = canvas.create_rectangle(
-                    _drag["x0"], _drag["y0"], ev.x, ev.y,
-                    outline="#FF6B00", width=2,
-                )
-
-            def _release(ev: tk.Event) -> None:
-                x0 = min(_drag["x0"], ev.x)
-                y0 = min(_drag["y0"], ev.y)
-                x1 = max(_drag["x0"], ev.x)
-                y1 = max(_drag["y0"], ev.y)
-                if (x1 - x0) < 10 or (y1 - y0) < 10:
-                    sel_lbl.configure(
-                        text="⚠ Selección muy pequeña, intentá de nuevo",
-                        text_color=_COLOR_ERROR,
-                    )
-                    return
-                x_sc, y_sc = _scale[0]
-                _selection.clear()
-                _selection.append((
-                    int(x0 * x_sc), int(y0 * y_sc),
-                    int(x1 * x_sc), int(y1 * y_sc),
-                ))
-                sel_lbl.configure(
-                    text=f"✓ Selección: {int((x1-x0)*x_sc)} × {int((y1-y0)*y_sc)} px — listo",
-                    text_color=_COLOR_OK,
-                )
-                insert_btn.configure(state="normal")
-
-            canvas.bind("<ButtonPress-1>", _press)
-            canvas.bind("<B1-Motion>", _move)
-            canvas.bind("<ButtonRelease-1>", _release)
-
-        def _on_insert() -> None:
-            if not _selection:
-                return
-            x1r, y1r, x2r, y2r = _selection[0]
-            crop = _screenshot[0].crop((x1r, y1r, x2r, y2r))
-
-            images_dir = (
-                Path.home() / "AppData" / "Local" / "rpa_conciliaciones" / "macros" / "images"
-            )
-            images_dir.mkdir(parents=True, exist_ok=True)
-            filename = f"wait_{int(time.time())}.png"
-            crop.save(images_dir / filename)
-            logger.info("Template PNG guardado: %s", images_dir / filename)
-
-            max_retries = 10
-            interval = 15.0
-            reload_key = "f5"
-            if _adv_fields:
-                try:
-                    max_retries = int(_adv_fields["retries"].get().strip())
-                    interval = float(_adv_fields["interval"].get().strip())
-                    reload_key = _adv_fields["key"].get().strip() or "f5"
-                except (ValueError, KeyError):
-                    pass
-
-            try:
-                self._recorder.mark_wait_image_or_reload(
-                    image_template=filename,
-                    max_retries=max_retries,
-                    retry_interval_seconds=interval,
-                    reload_key=reload_key,
-                )
-            except MacroRecorderError as e:
-                logger.warning("mark_wait_image_or_reload falló: %s", e)
-
-            self._recorder.resume()
-            try:
-                popup.destroy()
-            except Exception:
-                pass
-
-        _build_phase1()
-
     def _show_wait_download_picker(self) -> None:
         """Abre un popup para configurar una acción wait_download_or_reload.
 
@@ -1104,12 +741,12 @@ class MacroRecorderPanel(ctk.CTkFrame):
 
         ctk.CTkButton(
             btn_row,
-            text="📷 Capturar template",
+            text="⏳ Esperar 2s (F9)",
             height=26, corner_radius=6,
             font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
             fg_color=(_COLOR_WARN, "#8B4A00"),
             hover_color=("orange3", "#6B3800"),
-            command=self._show_wait_reload_picker,
+            command=lambda: self._recorder.mark_delay(2.0),
         ).grid(row=0, column=0, padx=(0, 3), sticky="ew")
 
         ctk.CTkButton(
