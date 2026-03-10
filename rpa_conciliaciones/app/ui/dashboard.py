@@ -325,25 +325,28 @@ class Dashboard(ctk.CTk):
     def _build_macro_tab(self, parent) -> None:
         """
         Construye la tab de Macros con grabador arriba y lista abajo.
-        Usa CTkScrollableFrame para que el estado Review nunca quede cortado.
+
+        Usa grid para que la lista ocupe todo el espacio vertical restante
+        sin anidar CTkScrollableFrame dentro de CTkScrollableFrame.
+        El recorder va en row=0 (altura natural) y la lista en row=1 (flex).
         """
-        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
-        scroll.pack(fill="both", expand=True)
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
 
         recorder = MacroRecorder()
         storage  = MacroStorage()
 
         list_panel = MacroListPanel(
-            scroll, storage,
+            parent, storage,
             on_test_macro=self._handle_test_macro,
         )
 
         recorder_panel = MacroRecorderPanel(
-            scroll, recorder, storage,
+            parent, recorder, storage,
             on_saved=list_panel.refresh,
         )
-        recorder_panel.pack(fill="x", padx=12, pady=(8, 8))
-        list_panel.pack(fill="x", padx=12)
+        recorder_panel.grid(row=0, column=0, sticky="ew", padx=12, pady=(8, 4))
+        list_panel.grid(row=1, column=0, sticky="nsew", padx=0, pady=0)
 
     def _build_session_panel(self, parent) -> None:
         """Card de estado de sesiones."""

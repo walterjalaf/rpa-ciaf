@@ -246,30 +246,9 @@ class MacroRecorderPanel(ctk.CTkFrame):
             fg_color=("gray85", "gray25"),
         ).pack(fill="x", pady=(0, 10))
 
-        # Controles de grabación en grid 2x2
+        # Controles de grabación
         controls = ctk.CTkFrame(body, fg_color="transparent")
         controls.pack(fill="x", pady=(0, 10))
-        controls.columnconfigure((0, 1), weight=1)
-
-        ctk.CTkButton(
-            controls,
-            text="↩  Deshacer última",
-            height=32, corner_radius=6,
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            fg_color=("gray88", "#2A3340"),
-            hover_color=("gray80", "#323E4D"),
-            text_color=("gray10", "gray90"),
-            command=self._on_undo,
-        ).grid(row=0, column=0, padx=(0, 4), pady=3, sticky="ew")
-
-        ctk.CTkButton(
-            controls,
-            text="📅  Marcar fecha inicio",
-            height=32, corner_radius=6,
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            fg_color=_CIAF_BLUE, hover_color=_CIAF_BLUE_HOVER,
-            command=lambda: self._show_format_picker(DATE_FROM),
-        ).grid(row=0, column=1, padx=(4, 0), pady=3, sticky="ew")
 
         ctk.CTkButton(
             controls,
@@ -279,16 +258,7 @@ class MacroRecorderPanel(ctk.CTkFrame):
             fg_color=(_COLOR_WARN, "#8B4A00"),
             hover_color=("orange3", "#6B3800"),
             command=lambda: self._recorder.mark_delay(2.0),
-        ).grid(row=1, column=0, padx=(0, 4), pady=3, sticky="ew")
-
-        ctk.CTkButton(
-            controls,
-            text="📅  Marcar fecha fin",
-            height=32, corner_radius=6,
-            font=ctk.CTkFont(family="Segoe UI", size=11),
-            fg_color=_CIAF_BLUE, hover_color=_CIAF_BLUE_HOVER,
-            command=lambda: self._show_format_picker(DATE_TO),
-        ).grid(row=1, column=1, padx=(4, 0), pady=3, sticky="ew")
+        ).pack(fill="x", pady=(0, 4))
 
         ctk.CTkButton(
             controls,
@@ -298,7 +268,7 @@ class MacroRecorderPanel(ctk.CTkFrame):
             fg_color=(_CIAF_BLUE, "#0A2D50"),
             hover_color=(_CIAF_BLUE_HOVER, "#061E35"),
             command=self._show_wait_download_picker,
-        ).grid(row=2, column=0, columnspan=2, padx=0, pady=3, sticky="ew")
+        ).pack(fill="x")
 
         # Botón detener — CTA rojo prominente
         ctk.CTkButton(

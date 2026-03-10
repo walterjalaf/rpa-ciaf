@@ -3,16 +3,11 @@ Panel de lista y gestión de macros guardadas.
 
 Por qué existe: Permite al técnico ver, probar, eliminar y publicar
 las macros grabadas con MacroRecorderPanel. Muestra cada macro como
-una card con nombre, task_id, fecha de creación y versión.
+una card horizontal con nombre, metadatos, contador de acciones y
+botones de acción alineados a la derecha.
 
-Controles por macro:
-    ▶ Probar   → ejecuta la macro con DateResolver.resolve('yesterday')
-    📤 Publicar → llama al callback on_publish (MacroSync.upload_macro)
-    Eliminar   → borra el JSON del storage local
-
-Rediseño v2.0: identidad visual CIAF — cada macro es una card con borde
-izquierdo azul CIAF, pill de cantidad de acciones, botones con jerarquía
-primario / destructivo.
+Rediseño v3.0: card horizontal de ancho completo.
+    [strip CIAF] | [nombre + metadatos — flex] | [N acciones] | [botones]
 
 Uso:
     panel = MacroListPanel(parent, storage,
@@ -42,14 +37,18 @@ _COLOR_OK_HOVER  = "#1E7E34"
 _COLOR_ERROR     = "#DC3545"
 _COLOR_ERROR_HOV = "#C82333"
 
+_BTN_W = 114
+_BTN_H = 30
+
 
 class MacroListPanel(ctk.CTkFrame):
     """
     Lista scrollable de macros guardadas con controles de gestión.
 
     Por qué existe: Centraliza la gestión de macros en un componente
-    reutilizable. El técnico puede ver el estado de todas sus macros
-    y realizar acciones sin ir a la carpeta de AppData.
+    reutilizable que ocupa el ancho completo de la tab. Cada macro se
+    muestra como una fila horizontal con info a la izquierda, contador
+    de acciones en el centro y botones de acción a la derecha.
 
     Callbacks:
         on_test_macro: Llamado con (recording: Recording) al presionar "▶ Probar".
@@ -65,8 +64,8 @@ class MacroListPanel(ctk.CTkFrame):
     ) -> None:
         super().__init__(
             parent,
-            corner_radius=12,
-            fg_color=("white", "#1E2530"),
+            corner_radius=0,
+            fg_color="transparent",
         )
         self._storage       = storage
         self._on_test_macro = on_test_macro
@@ -90,9 +89,9 @@ class MacroListPanel(ctk.CTkFrame):
     # ══════════════════════════════════════════════════════════
 
     def _build_header(self) -> None:
-        """Header con título, contador y botón de actualizar."""
+        """Header con título y botón de actualizar."""
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=16, pady=(12, 6))
+        header.pack(fill="x", padx=16, pady=(10, 6))
 
         ctk.CTkLabel(
             header,
@@ -101,7 +100,6 @@ class MacroListPanel(ctk.CTkFrame):
             text_color=("gray10", "gray90"),
         ).pack(side="left")
 
-        # Botón actualizar — outline secundario
         ctk.CTkButton(
             header,
             text="↻  Actualizar",
@@ -116,21 +114,20 @@ class MacroListPanel(ctk.CTkFrame):
             command=self.refresh,
         ).pack(side="right")
 
-        # Separador
         ctk.CTkFrame(
             self, height=1, corner_radius=0,
             fg_color=("gray85", "gray25"),
         ).pack(fill="x", padx=16)
 
     def _build_list_area(self) -> None:
-        """Frame scrollable donde se renderizan las cards de macros."""
+        """Frame scrollable que ocupa todo el espacio vertical disponible."""
         self._scroll_frame = ctk.CTkScrollableFrame(
             self,
-            height=200,
             fg_color="transparent",
             scrollbar_button_color=(_CIAF_GRAY, "gray35"),
         )
-        self._scroll_frame.pack(fill="x", padx=12, pady=(6, 12))
+        self._scroll_frame.pack(fill="both", expand=True, padx=8, pady=(6, 8))
+        self._scroll_frame.columnconfigure(0, weight=1)
 
     def _rebuild_list(self) -> None:
         """Limpia y repopula el frame scrollable con las macros actuales."""
@@ -146,7 +143,7 @@ class MacroListPanel(ctk.CTkFrame):
                 font=ctk.CTkFont(family="Segoe UI", size=11),
                 text_color=_CIAF_GRAY,
                 justify="center",
-            ).pack(pady=24)
+            ).pack(pady=32)
             return
 
         for recording in macros:
@@ -154,13 +151,12 @@ class MacroListPanel(ctk.CTkFrame):
 
     def _build_macro_card(self, recording: Recording) -> None:
         """
-        Renderiza una card con info y controles para una macro.
+        Renderiza una card horizontal de ancho completo para una macro.
 
-        Layout:
-            [strip 4px CIAF] | [nombre + detalles]          [pill acciones]
-                               [botones: Probar / Publicar / Eliminar]
+        Layout (izquierda → derecha):
+            [strip 5px CIAF] | [nombre + metadatos — flex] |
+            [contador de acciones] | [botones verticales]
         """
-        # Contenedor externo de la card
         card = ctk.CTkFrame(
             self._scroll_frame,
             corner_radius=10,
@@ -168,87 +164,114 @@ class MacroListPanel(ctk.CTkFrame):
             border_width=1,
             border_color=("gray85", "gray25"),
         )
-        card.pack(fill="x", pady=(0, 6))
+        card.pack(fill="x", pady=(0, 8))
 
-        # Borde izquierdo CIAF (strip de 4px)
-        strip = ctk.CTkFrame(
-            card, width=5, corner_radius=0, fg_color=_CIAF_BLUE,
-        )
+        # Borde izquierdo CIAF
+        strip = ctk.CTkFrame(card, width=5, corner_radius=0, fg_color=_CIAF_BLUE)
         strip.pack(side="left", fill="y")
         strip.pack_propagate(False)
 
-        # Cuerpo de la card
+        # Cuerpo principal
         body = ctk.CTkFrame(card, fg_color="transparent")
-        body.pack(side="left", fill="both", expand=True,
-                  padx=(10, 12), pady=10)
+        body.pack(side="left", fill="both", expand=True, padx=(16, 16), pady=14)
 
-        # ── Fila superior: nombre + pill ────────────────────
-        top_row = ctk.CTkFrame(body, fg_color="transparent")
-        top_row.pack(fill="x")
+        # ── Botones (empacados primero → quedan a la derecha) ──
+        self._build_card_buttons(body, recording)
+
+        # ── Contador de acciones ──
+        self._build_card_stats(body, recording)
+
+        # ── Info (nombre + metadatos, llena el espacio restante) ──
+        self._build_card_info(body, recording)
+
+    def _build_card_info(self, body: ctk.CTkFrame, recording: Recording) -> None:
+        """Columna izquierda: nombre en negrita y metadatos en gris."""
+        info = ctk.CTkFrame(body, fg_color="transparent")
+        info.pack(side="left", fill="both", expand=True)
 
         ctk.CTkLabel(
-            top_row,
+            info,
             text=recording.macro_name,
-            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
             text_color=("gray10", "gray90"),
             anchor="w",
-        ).pack(side="left")
+        ).pack(anchor="w")
 
-        # Pill con cantidad de acciones
-        ctk.CTkLabel(
-            top_row,
-            text=f"{len(recording.actions)} acciones",
-            font=ctk.CTkFont(family="Segoe UI", size=10),
-            corner_radius=10,
-            fg_color=("#D6E4F0", "#0A2A45"),
-            text_color=(_CIAF_BLUE, "#5BA3D9"),
-            padx=8, pady=2,
-        ).pack(side="right")
-
-        # ── Fila de metadatos ───────────────────────────────
         fecha   = recording.created_at.strftime("%d/%m/%Y  %H:%M")
         task_id = recording.task_id or "—"
+        meta    = f"task: {task_id}   ·   {fecha}   ·   v{recording.version}"
+
         ctk.CTkLabel(
-            body,
-            text=f"task_id: {task_id}   ·   v{recording.version}   ·   {fecha}",
+            info,
+            text=meta,
             font=ctk.CTkFont(family="Segoe UI", size=10),
             text_color=_CIAF_GRAY,
             anchor="w",
-        ).pack(anchor="w", pady=(2, 8))
+        ).pack(anchor="w", pady=(4, 0))
 
-        # ── Botones de acción ───────────────────────────────
-        btn_row = ctk.CTkFrame(body, fg_color="transparent")
-        btn_row.pack(anchor="w")
+        if recording.description:
+            ctk.CTkLabel(
+                info,
+                text=recording.description,
+                font=ctk.CTkFont(family="Segoe UI", size=10),
+                text_color=("gray50", "gray55"),
+                anchor="w",
+                wraplength=420,
+                justify="left",
+            ).pack(anchor="w", pady=(2, 0))
+
+    def _build_card_stats(self, body: ctk.CTkFrame, recording: Recording) -> None:
+        """Columna central: número grande de acciones como estadística visual."""
+        stats = ctk.CTkFrame(body, fg_color="transparent")
+        stats.pack(side="right", anchor="center", padx=(0, 24))
+
+        ctk.CTkLabel(
+            stats,
+            text=str(len(recording.actions)),
+            font=ctk.CTkFont(family="Segoe UI", size=28, weight="bold"),
+            text_color=(_CIAF_BLUE, "#5BA3D9"),
+        ).pack()
+
+        ctk.CTkLabel(
+            stats,
+            text="acciones",
+            font=ctk.CTkFont(family="Segoe UI", size=9),
+            text_color=_CIAF_GRAY,
+        ).pack()
+
+    def _build_card_buttons(self, body: ctk.CTkFrame, recording: Recording) -> None:
+        """Columna derecha: botones apilados verticalmente con jerarquía visual."""
+        btn_col = ctk.CTkFrame(body, fg_color="transparent")
+        btn_col.pack(side="right", anchor="center")
 
         if self._on_test_macro:
             ctk.CTkButton(
-                btn_row,
+                btn_col,
                 text="▶  Probar",
-                width=90, height=30,
+                width=_BTN_W, height=_BTN_H,
                 corner_radius=6,
                 font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
                 fg_color=_COLOR_OK,
                 hover_color=_COLOR_OK_HOVER,
                 command=lambda r=recording: self._test_macro(r),
-            ).pack(side="left", padx=(0, 6))
+            ).pack(fill="x", pady=(0, 5))
 
         if self._on_publish:
             ctk.CTkButton(
-                btn_row,
+                btn_col,
                 text="📤  Publicar",
-                width=96, height=30,
+                width=_BTN_W, height=_BTN_H,
                 corner_radius=6,
                 font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
                 fg_color=_CIAF_BLUE,
                 hover_color=_CIAF_BLUE_HOVER,
                 command=lambda r=recording: self._publish_macro(r),
-            ).pack(side="left", padx=(0, 6))
+            ).pack(fill="x", pady=(0, 5))
 
-        # Eliminar — outline destructivo
         ctk.CTkButton(
-            btn_row,
+            btn_col,
             text="Eliminar",
-            width=84, height=30,
+            width=_BTN_W, height=_BTN_H,
             corner_radius=6,
             font=ctk.CTkFont(family="Segoe UI", size=11),
             fg_color="transparent",
@@ -257,7 +280,7 @@ class MacroListPanel(ctk.CTkFrame):
             hover_color=("gray92", "#2A3340"),
             text_color=(_COLOR_ERROR, "#E87070"),
             command=lambda r=recording: self._delete_macro(r),
-        ).pack(side="left")
+        ).pack(fill="x")
 
     # ══════════════════════════════════════════════════════════
     # Handlers
